@@ -87,12 +87,23 @@
   /* Top tabs (INFO / DATA / REMINDERS / DAY) */
   .top-tabs {
     display: flex;
-    gap: 0;
-    border-bottom: 1px solid var(--border);
+    flex-direction: column;
     background: var(--bg);
     position: sticky;
     top: 87px;
     z-index: 99;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .top-tabs-main {
+    display: flex;
+    gap: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .top-tabs-day {
+    display: flex;
+    justify-content: center;
   }
 
   .top-tab {
@@ -117,9 +128,12 @@
   }
 
   .top-tab.day-tab {
+    flex: 0 1 auto;
     color: var(--accent);
-    font-size: 12px;
+    font-size: 22px;
     letter-spacing: 0.05em;
+    padding: 14px 32px;
+    border-bottom: none;
   }
 
   .top-tab.day-tab.active {
@@ -535,8 +549,8 @@
   /* Delete exercise button (inside expanded view) */
   .delete-exercise {
     background: transparent;
-    border: 1px solid var(--border);
-    color: var(--text-faint);
+    border: 1px solid var(--accent);
+    color: var(--accent);
     padding: 8px 12px;
     font-family: 'JetBrains Mono', monospace;
     font-size: 10px;
@@ -1115,32 +1129,6 @@
   </div>
 </div>
 
-<!-- Export Modal -->
-<div class="modal-overlay" id="exportModal">
-  <div class="modal">
-    <h3>BACKUP YOUR DATA</h3>
-    <p>This contains ALL your data: workouts, history, custom exercises, and settings. Copy and save somewhere safe (Notes app, email yourself).</p>
-    <textarea id="exportText" readonly></textarea>
-    <div class="modal-buttons">
-      <button class="modal-btn" onclick="closeModal('exportModal')">CLOSE</button>
-      <button class="modal-btn primary" onclick="copyExport()">COPY</button>
-    </div>
-  </div>
-</div>
-
-<!-- Import Modal -->
-<div class="modal-overlay" id="importModal">
-  <div class="modal">
-    <h3>RESTORE DATA</h3>
-    <p>Paste your backup text below. This will overwrite your current data.</p>
-    <textarea id="importText" placeholder="Paste backup data here..."></textarea>
-    <div class="modal-buttons">
-      <button class="modal-btn" onclick="closeModal('importModal')">CANCEL</button>
-      <button class="modal-btn primary" onclick="doImport()">RESTORE</button>
-    </div>
-  </div>
-</div>
-
 <!-- First-launch Acknowledgment Modal (blocks navigation until acknowledged) -->
 <div class="modal-overlay" id="ackModal">
   <div class="modal">
@@ -1206,7 +1194,7 @@
     },
     rest_wed: {
       name: 'Rest',
-      subtitle: 'Muay Thai + Light Cardio',
+      subtitle: 'Light Cardio',
       day: 'WED',
       rest: true,
       restMessage: 'Active recovery. Save the lifting for tomorrow.',
@@ -1376,6 +1364,7 @@
   // Otherwise: { MON: workoutKey|null, TUE: ..., ... } reflecting tentative
   // reassignment until the user presses CONFIRM.
   const WEEK_ORDER = ['MON','TUE','WED','THU','FRI','SAT','SUN'];
+  const DAY_FULL_NAMES = { MON: 'MONDAY', TUE: 'TUESDAY', WED: 'WEDNESDAY', THU: 'THURSDAY', FRI: 'FRIDAY', SAT: 'SATURDAY', SUN: 'SUNDAY' };
   let pendingDayAssignment = null;
 
   function getCurrentDayAssignment() {
@@ -1474,6 +1463,10 @@
         if (state.workouts.rest_sun && Array.isArray(state.workouts.rest_sun.exercises)) {
           state.workouts.rest_sun.exercises = state.workouts.rest_sun.exercises.filter(e => e.id !== 'cardio_sun');
         }
+        // Strip Muay Thai mention from active-rest-day subtitle for older saves
+        if (state.workouts.rest_wed && typeof state.workouts.rest_wed.subtitle === 'string' && /muay/i.test(state.workouts.rest_wed.subtitle)) {
+          state.workouts.rest_wed.subtitle = 'Light Cardio';
+        }
         return;
       }
       // Try migrating from v1 (the old flat key/value structure)
@@ -1565,23 +1558,29 @@
     if (!state.currentDay) return 'TODAY';
     const w = state.workouts[state.currentDay];
     if (!w) return 'TODAY';
-    return `${w.day} — ${w.name.toUpperCase()}`;
+    const fullDay = DAY_FULL_NAMES[w.day] || w.day;
+    return `${fullDay} — ${w.name.toUpperCase()}`;
   }
 
   function renderTopTabs() {
     const tabs = document.getElementById('topTabs');
-    const tabsConfig = [
+    const mainTabs = [
       { id: 'info', label: 'INFO' },
       { id: 'data', label: 'DATA + SETNG' },
-      { id: 'reminders', label: 'REMINDERS' },
-      { id: 'day', label: getDayLabel(), isDay: true }
+      { id: 'reminders', label: 'REMINDERS' }
     ];
+    const dayTab = { id: 'day', label: getDayLabel(), isDay: true };
 
-    tabs.innerHTML = tabsConfig.map(t => `
+    const renderTab = (t) => `
       <button class="top-tab ${state.currentTab === t.id ? 'active' : ''} ${t.isDay ? 'day-tab' : ''}" data-tab="${t.id}">
         ${t.label}
       </button>
-    `).join('');
+    `;
+
+    tabs.innerHTML = `
+      <div class="top-tabs-main">${mainTabs.map(renderTab).join('')}</div>
+      <div class="top-tabs-day">${renderTab(dayTab)}</div>
+    `;
 
     tabs.querySelectorAll('.top-tab').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -1652,7 +1651,16 @@
       {
         date: '2026-05-06',
         changes: [
-          'You can now install SPLITSTAK on your phone or computer like a real app — Add to Home Screen on iPhone, or Install on Android and desktop Chrome.'
+          'You can now install SPLITSTAK on your phone or computer like a real app — Add to Home Screen on iPhone, or Install on Android and desktop Chrome.',
+          'Export and Import are now CSV files. Export downloads a spreadsheet you can open in Excel or Google Sheets. Import accepts the same CSV back.',
+          'DAY ASSIGNMENT has a new "Custom..." option at the bottom of each day\'s dropdown. Pick it to type your own workout name (e.g., CHEST/TRI instead of PUSH).',
+          'The current day tab moved to its own row below INFO / DATA + SETNG / REMINDERS, centered and slightly larger.',
+          'Tapping an exercise no longer triggers edit mode by mistake. Double-tap an exercise name or target to edit them.',
+          'The Delete Exercise button is now orange so it\'s easier to spot inside an expanded exercise.',
+          'New "FOR BEGINNERS" card on the INFO tab — the default split is followable as-is for newcomers.',
+          'Day names are now spelled out in full (TUESDAY instead of TUE) on the day tab, the day-view dropdown, and the DAY ASSIGNMENT rows.',
+          'The day tab text is a bit larger now so it reads as the dominant nav element.',
+          'Cleaned up the active rest day subtitle — it now just reads "Light Cardio".'
         ]
       },
       {
@@ -1681,6 +1689,12 @@
         <h3>⚠ DATA WARNING</h3>
         <p><strong>Your data is stored only in this browser.</strong> Clearing browser data, switching devices, or uninstalling = total loss.</p>
         <p>Visit the DATA + SETNG tab and EXPORT regularly. There is no cloud, no account, no automatic backup.</p>
+      </div>
+
+      <div class="info-section">
+        <h3>FOR BEGINNERS</h3>
+        <p><strong>The default split works as-is.</strong> PUSH, PULL, REST, LEGS, PUMP, ABS, REST — open the day tab, log your sets, hit SAVE DAY. Pick a weight you can finish all the listed reps with. When you can hit the top of the rep range with that weight, bump it up next session.</p>
+        <p>Customize names and exercises later via DAY ASSIGNMENT and double-tap-to-edit — or just keep following the defaults. The defaults are tuned for newcomers building the habit.</p>
       </div>
 
       <div class="info-section">
@@ -1765,10 +1779,10 @@
         const cls = floatingKeys.has(k) ? ' class="pick-needed"' : '';
         const sel = k === currentKey ? ' selected' : '';
         return `<option value="${k}"${sel}${cls}>${optionLabel[k]}</option>`;
-      }).join('');
+      }).join('') + '<option value="__custom__">Custom...</option>';
       return `
         <div class="settings-row ${isUnassigned ? 'conflict' : ''}">
-          <div class="label" style="font-family: 'Bebas Neue', sans-serif; font-size: 18px; letter-spacing: 0.08em;">${d}</div>
+          <div class="label" style="font-family: 'Bebas Neue', sans-serif; font-size: 18px; letter-spacing: 0.08em;">${DAY_FULL_NAMES[d] || d}</div>
           <div class="controls">
             <select class="day-assign" data-weekday="${d}">
               ${isUnassigned ? '<option value="" selected class="pick-needed">— SELECT —</option>' : ''}
@@ -1830,7 +1844,7 @@
 
       <div class="data-section">
         <h3>BACKUP & RESTORE</h3>
-        <p>Export covers ALL data: workouts, history, custom exercises, settings. Import will overwrite everything currently in the app.</p>
+        <p>Export downloads a CSV file with all your data — open it in Excel or Google Sheets to track your progress over time. Import accepts the same CSV file to restore everything.</p>
         <div class="data-buttons">
           <button class="data-btn" id="exportBtn">Export</button>
           <button class="data-btn" id="importBtn">Import</button>
@@ -1866,10 +1880,28 @@
     // Wire up Day Assignment dropdowns — independent assignment, no auto-swap.
     // Picking a workout already on another day clears that other day; user must reassign it.
     document.querySelectorAll('.day-assign').forEach(sel => {
-      sel.addEventListener('change', (e) => {
+      sel.addEventListener('change', async (e) => {
         const targetDay = e.target.dataset.weekday;
-        const newKey = e.target.value || null;
-        applyPendingDayChange(targetDay, newKey);
+        const rawValue = e.target.value || null;
+        if (rawValue === '__custom__') {
+          // Find the workout currently on this day in the pending state.
+          const pendingNow = pendingDayAssignment || getCurrentDayAssignment();
+          const currentKey = pendingNow[targetDay];
+          if (!currentKey) {
+            await customAlert('Pick a workout for this day first, then choose Custom to rename it.', 'NO WORKOUT YET');
+            renderContent();
+            return;
+          }
+          const currentName = state.workouts[currentKey] ? state.workouts[currentKey].name : '';
+          const newName = await customPrompt('Type a name for this workout (e.g., CHEST/TRI).', 'CUSTOM WORKOUT NAME', currentName);
+          if (newName && state.workouts[currentKey]) {
+            state.workouts[currentKey].name = newName;
+            saveState();
+          }
+          renderContent();
+          return;
+        }
+        applyPendingDayChange(targetDay, rawValue);
         renderContent(); // re-render DATA to refresh dropdowns and CONFIRM state
       });
     });
@@ -1931,7 +1963,7 @@
       <div class="day-selector">
         <select class="day-dropdown" id="dayDropdown">
           ${sortedEntries.map(([key, w]) =>
-            `<option value="${key}" ${key === state.currentDay ? 'selected' : ''}>${w.day} — ${w.name.toUpperCase()}</option>`
+            `<option value="${key}" ${key === state.currentDay ? 'selected' : ''}>${DAY_FULL_NAMES[w.day] || w.day} — ${w.name.toUpperCase()}</option>`
           ).join('')}
         </select>
       </div>
@@ -2104,17 +2136,17 @@
       });
     });
 
-    // Inline editable name
+    // Inline editable name — double-click to enter edit mode (avoids accidental edits on tap-to-open)
     document.querySelectorAll('[data-edit-name]').forEach(el => {
-      el.addEventListener('click', (e) => {
+      el.addEventListener('dblclick', (e) => {
         e.stopPropagation();
         startEditName(el);
       });
     });
 
-    // Inline editable target
+    // Inline editable target — double-click to enter edit mode
     document.querySelectorAll('[data-edit-target]').forEach(el => {
-      el.addEventListener('click', (e) => {
+      el.addEventListener('dblclick', (e) => {
         e.stopPropagation();
         startEditTarget(el);
       });
@@ -2501,76 +2533,242 @@
     return 'push';
   }
 
-  // ============ EXPORT / IMPORT ============
+  // ============ EXPORT / IMPORT (CSV) ============
+  // Multi-section CSV preserves all state — workouts, exercises, sets, history, cardio, meta.
+  // Each section starts with a SECTION,<name> row, then a TYPE+columns header, then data rows.
+
+  function csvEscape(value) {
+    const s = value === null || value === undefined ? '' : String(value);
+    if (s.includes(',') || s.includes('"') || s.includes('\n') || s.includes('\r')) {
+      return '"' + s.replace(/"/g, '""') + '"';
+    }
+    return s;
+  }
+
+  function csvRow(arr) {
+    return arr.map(csvEscape).join(',');
+  }
+
+  function stateToCSV(s) {
+    const lines = [];
+    lines.push('SECTION,STATE');
+    lines.push('TYPE,KEY,VALUE');
+    lines.push(csvRow(['META','timerEnabled', s.timerEnabled]));
+    lines.push(csvRow(['META','timerDuration', s.timerDuration]));
+    lines.push(csvRow(['META','acknowledged', s.acknowledged]));
+    lines.push(csvRow(['META','currentDay', s.currentDay || '']));
+    lines.push('');
+
+    lines.push('SECTION,WORKOUTS');
+    lines.push('TYPE,KEY,DAY,NAME,SUBTITLE,REST,REST_MESSAGE');
+    Object.entries(s.workouts || {}).forEach(([k,w]) => {
+      lines.push(csvRow(['WORKOUT', k, w.day || '', w.name || '', w.subtitle || '', !!w.rest, w.restMessage || '']));
+    });
+    lines.push('');
+
+    lines.push('SECTION,EXERCISES');
+    lines.push('TYPE,WORKOUT_KEY,EXERCISE_ID,NAME,TARGET,IS_CARDIO');
+    Object.entries(s.workouts || {}).forEach(([k,w]) => {
+      (w.exercises || []).forEach(ex => {
+        lines.push(csvRow(['EXERCISE', k, ex.id, ex.name || '', ex.target || '', !!ex.isCardio]));
+      });
+    });
+    lines.push('');
+
+    lines.push('SECTION,SETS');
+    lines.push('TYPE,EXERCISE_ID,INDEX,WEIGHT,REPS,DONE');
+    Object.entries(s.exerciseData || {}).forEach(([exId, data]) => {
+      (data.sets || []).forEach((st, i) => {
+        lines.push(csvRow(['SET', exId, i, st.w || '', st.r || '', !!st.d]));
+      });
+    });
+    lines.push('');
+
+    lines.push('SECTION,HISTORY');
+    lines.push('TYPE,EXERCISE_ID,DATE,ISO,SUMMARY,TOP_WEIGHT,TOP_REPS');
+    Object.entries(s.exerciseData || {}).forEach(([exId, data]) => {
+      (data.history || []).forEach(h => {
+        lines.push(csvRow(['HISTORY', exId, h.date || '', h.iso || '', h.summary || '', h.topWeight !== undefined ? h.topWeight : '', h.topReps !== undefined ? h.topReps : '']));
+      });
+    });
+    lines.push('');
+
+    lines.push('SECTION,CARDIO_LOG');
+    lines.push('TYPE,EXERCISE_ID,TIME,DISTANCE');
+    Object.entries(s.exerciseData || {}).forEach(([exId, data]) => {
+      if (data.cardio) {
+        lines.push(csvRow(['CARDIO', exId, data.cardio.time || '', data.cardio.distance || '']));
+      }
+    });
+
+    return lines.join('\n');
+  }
+
+  function csvParse(text) {
+    const rows = [];
+    let i = 0, row = [], cell = '', inQuotes = false;
+    while (i < text.length) {
+      const c = text[i];
+      if (inQuotes) {
+        if (c === '"') {
+          if (text[i+1] === '"') { cell += '"'; i++; }
+          else { inQuotes = false; }
+        } else {
+          cell += c;
+        }
+      } else {
+        if (c === '"' && cell === '') {
+          inQuotes = true;
+        } else if (c === ',') {
+          row.push(cell); cell = '';
+        } else if (c === '\n' || c === '\r') {
+          if (c === '\r' && text[i+1] === '\n') i++;
+          row.push(cell);
+          rows.push(row);
+          row = []; cell = '';
+        } else {
+          cell += c;
+        }
+      }
+      i++;
+    }
+    if (cell !== '' || row.length > 0) { row.push(cell); rows.push(row); }
+    return rows;
+  }
+
+  function csvToState(csvText) {
+    const rows = csvParse(csvText);
+    const s = {
+      workouts: {},
+      exerciseData: {},
+      currentTab: 'info',
+      currentDay: null,
+      acknowledged: false,
+      timerEnabled: true,
+      timerDuration: 90
+    };
+    let foundAny = false;
+    for (const row of rows) {
+      if (!row.length || row.every(c => !c)) continue;
+      const t = row[0];
+      if (t === 'SECTION' || t === 'TYPE') continue;
+      foundAny = true;
+      if (t === 'META') {
+        const k = row[1], v = row[2];
+        if (k === 'timerEnabled') s.timerEnabled = v === 'true';
+        else if (k === 'timerDuration') s.timerDuration = parseInt(v) || 90;
+        else if (k === 'acknowledged') s.acknowledged = v === 'true';
+        else if (k === 'currentDay') s.currentDay = v || null;
+      } else if (t === 'WORKOUT') {
+        const [, key, day, name, subtitle, rest, restMessage] = row;
+        s.workouts[key] = {
+          day: day || '',
+          name: name || '',
+          subtitle: subtitle || '',
+          rest: rest === 'true',
+          restMessage: restMessage || '',
+          exercises: []
+        };
+      } else if (t === 'EXERCISE') {
+        const [, workoutKey, exId, name, target, isCardio] = row;
+        if (s.workouts[workoutKey]) {
+          s.workouts[workoutKey].exercises.push({
+            id: exId,
+            name: name || '',
+            target: target || '',
+            isCardio: isCardio === 'true'
+          });
+        }
+      } else if (t === 'SET') {
+        const [, exId, idx, w, r, d] = row;
+        if (!s.exerciseData[exId]) s.exerciseData[exId] = { sets: [], history: [] };
+        const ix = parseInt(idx);
+        while (s.exerciseData[exId].sets.length <= ix) s.exerciseData[exId].sets.push({ w:'', r:'', d:false });
+        s.exerciseData[exId].sets[ix] = { w: w || '', r: r || '', d: d === 'true' };
+      } else if (t === 'HISTORY') {
+        const [, exId, date, iso, summary, topWeight, topReps] = row;
+        if (!s.exerciseData[exId]) s.exerciseData[exId] = { sets: [], history: [] };
+        const entry = { date: date || '', iso: iso || '', summary: summary || '' };
+        if (topWeight !== '' && topWeight !== undefined) entry.topWeight = parseFloat(topWeight);
+        if (topReps !== '' && topReps !== undefined) entry.topReps = parseInt(topReps);
+        s.exerciseData[exId].history.push(entry);
+      } else if (t === 'CARDIO') {
+        const [, exId, time, distance] = row;
+        if (!s.exerciseData[exId]) s.exerciseData[exId] = { sets: [], history: [] };
+        s.exerciseData[exId].cardio = {
+          time: parseFloat(time) || 0,
+          distance: parseFloat(distance) || 0
+        };
+      }
+    }
+    if (!foundAny) throw new Error('No data rows found');
+    return s;
+  }
+
   function openExport() {
-    const text = JSON.stringify(state);
-    document.getElementById('exportText').value = text;
-    document.getElementById('exportModal').classList.add('show');
+    const csv = stateToCSV(state);
+    const date = new Date().toISOString().split('T')[0];
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'splitstak-' + date + '.csv';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showToast('Exported');
   }
 
   function openImport() {
-    document.getElementById('importText').value = '';
-    document.getElementById('importModal').classList.add('show');
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.csv,text/csv';
+    input.style.display = 'none';
+    input.addEventListener('change', async () => {
+      const file = input.files && input.files[0];
+      document.body.removeChild(input);
+      if (!file) return;
+      let text;
+      try { text = await file.text(); } catch (e) {
+        await customAlert('Could not read this file.', 'IMPORT FAILED');
+        return;
+      }
+      let imported;
+      try {
+        imported = csvToState(text);
+      } catch (e) {
+        await customAlert('That file does not look like a SPLITSTAK export. Try the most recent CSV you exported from SPLITSTAK.', 'IMPORT FAILED');
+        return;
+      }
+      const ok = await customConfirm('This will replace your current data with the contents of the CSV. Continue?', 'IMPORT DATA');
+      if (!ok) return;
+      // Backfill any missing fields
+      if (!imported.workouts || !Object.keys(imported.workouts).length) imported.workouts = deepClone(DEFAULT_WORKOUTS);
+      if (!imported.exerciseData) imported.exerciseData = {};
+      if (typeof imported.acknowledged !== 'boolean') imported.acknowledged = false;
+      if (!imported.currentTab) imported.currentTab = 'info';
+      if (typeof imported.timerEnabled !== 'boolean') imported.timerEnabled = true;
+      if (typeof imported.timerDuration !== 'number') imported.timerDuration = 90;
+      if (imported.workouts.rest_sun && Array.isArray(imported.workouts.rest_sun.exercises)) {
+        imported.workouts.rest_sun.exercises = imported.workouts.rest_sun.exercises.filter(e => e.id !== 'cardio_sun');
+      }
+      if (imported.workouts.rest_wed && typeof imported.workouts.rest_wed.subtitle === 'string' && /muay/i.test(imported.workouts.rest_wed.subtitle)) {
+        imported.workouts.rest_wed.subtitle = 'Light Cardio';
+      }
+      state = imported;
+      pendingDayAssignment = null;
+      saveState();
+      renderTopTabs();
+      renderContent();
+      showToast('Imported');
+    });
+    document.body.appendChild(input);
+    input.click();
   }
 
   function closeModal(id) {
     document.getElementById(id).classList.remove('show');
-  }
-
-  function copyExport() {
-    const textarea = document.getElementById('exportText');
-    textarea.select();
-    textarea.setSelectionRange(0, 999999);
-    try {
-      document.execCommand('copy');
-      if (navigator.clipboard) {
-        navigator.clipboard.writeText(textarea.value).catch(() => {});
-      }
-      showToast('Copied');
-    } catch (e) {
-      showToast('Select & copy manually');
-    }
-  }
-
-  async function doImport() {
-    const text = document.getElementById('importText').value.trim();
-    if (!text) {
-      showToast('Paste data first');
-      return;
-    }
-    let imported;
-    try {
-      const parsed = JSON.parse(text);
-      if (typeof parsed !== 'object' || parsed === null) throw new Error('Invalid format');
-
-      // v2 format
-      if (parsed.workouts && parsed.exerciseData) {
-        imported = parsed;
-        if (!imported.workouts) imported.workouts = deepClone(DEFAULT_WORKOUTS);
-        if (!imported.exerciseData) imported.exerciseData = {};
-        if (typeof imported.acknowledged !== 'boolean') imported.acknowledged = false;
-        if (!imported.currentTab) imported.currentTab = 'info';
-        if (typeof imported.timerEnabled !== 'boolean') imported.timerEnabled = true;
-        if (typeof imported.timerDuration !== 'number') imported.timerDuration = 90;
-      } else {
-        // Looks like v1 (flat exercise-keyed object)
-        imported = migrateV1(parsed);
-      }
-    } catch (e) {
-      closeModal('importModal');
-      await customAlert('Invalid backup data. Make sure you copied the entire text from Export.', 'IMPORT FAILED');
-      return;
-    }
-
-    closeModal('importModal');
-    const ok = await customConfirm('This will replace your current data. Continue?', 'IMPORT DATA');
-    if (!ok) return;
-    state = imported;
-    pendingDayAssignment = null; // discard any in-progress day-assignment edits
-    saveState();
-    renderTopTabs();
-    renderContent();
-    showToast('Restored');
   }
 
   // ============ ACKNOWLEDGMENT ============
@@ -2655,6 +2853,55 @@
 
       okBtn.addEventListener('click', okHandler);
       modal.classList.add('show');
+    });
+  }
+
+  // customPrompt — modal-style text input. Returns the entered string, or null if canceled.
+  function customPrompt(message, title, defaultValue) {
+    return new Promise((resolve) => {
+      const modal = document.getElementById('confirmModal');
+      const titleEl = modal.querySelector('h3');
+      const bodyEl = modal.querySelector('p');
+      const cancelBtn = modal.querySelector('.modal-btn:not(.primary)');
+      const okBtn = modal.querySelector('.modal-btn.primary');
+      titleEl.textContent = title || 'INPUT';
+      bodyEl.innerHTML = '';
+      const msg = document.createElement('div');
+      msg.style.marginBottom = '12px';
+      msg.textContent = message || '';
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.value = defaultValue || '';
+      input.style.width = '100%';
+      input.style.padding = '10px 12px';
+      input.style.background = 'var(--bg)';
+      input.style.border = '1px solid var(--border)';
+      input.style.color = 'var(--text)';
+      input.style.fontFamily = 'JetBrains Mono, monospace';
+      input.style.fontSize = '13px';
+      input.style.borderRadius = '0';
+      bodyEl.appendChild(msg);
+      bodyEl.appendChild(input);
+      cancelBtn.style.display = '';
+      okBtn.textContent = 'OK';
+      modal.classList.add('show');
+      setTimeout(() => { input.focus(); input.select(); }, 50);
+      const onOk = () => { cleanup(); resolve(input.value.trim() || null); };
+      const onCancel = () => { cleanup(); resolve(null); };
+      const onKey = (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); onOk(); }
+        else if (e.key === 'Escape') { e.preventDefault(); onCancel(); }
+      };
+      const cleanup = () => {
+        modal.classList.remove('show');
+        okBtn.removeEventListener('click', onOk);
+        cancelBtn.removeEventListener('click', onCancel);
+        input.removeEventListener('keydown', onKey);
+        bodyEl.innerHTML = '';
+      };
+      okBtn.addEventListener('click', onOk);
+      cancelBtn.addEventListener('click', onCancel);
+      input.addEventListener('keydown', onKey);
     });
   }
 
