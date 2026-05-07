@@ -109,7 +109,7 @@
 
   .top-tabs-day {
     display: flex;
-    justify-content: center;
+    flex-direction: column;
   }
 
   .top-tab {
@@ -144,6 +144,71 @@
 
   .top-tab.day-tab.active {
     color: var(--accent);
+  }
+
+  /* Day-tab as a two-stage inline picker. Closed: the header row alone
+     (matches the old .top-tab.day-tab look). On the day tab, a small caret
+     appears as a hint that re-tapping expands the list. Open: the header
+     stays + all 7 days stack below it as full-width rows in the same Bebas
+     Neue 22px orange treatment, current day subtly highlighted. */
+  .day-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    width: 100%;
+    padding: 14px 24px;
+    background: transparent;
+    border: none;
+    color: var(--accent);
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 22px;
+    letter-spacing: 0.05em;
+    cursor: pointer;
+    white-space: nowrap;
+    box-sizing: border-box;
+    transition: background 0.12s;
+  }
+
+  .day-row:hover {
+    background: rgba(255, 87, 34, 0.06);
+  }
+
+  .day-row.is-open {
+    background: rgba(255, 87, 34, 0.04);
+  }
+
+  /* Caret only visible when we're on the day tab — signals "tap again to expand". */
+  .day-row-caret {
+    display: inline-block;
+    width: 0; height: 0;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-top: 6px solid var(--accent);
+    transition: transform 0.15s ease-out;
+  }
+
+  .day-row.is-open .day-row-caret {
+    transform: rotate(180deg);
+  }
+
+  .day-row-list {
+    display: flex;
+    flex-direction: column;
+    border-top: 1px solid var(--border);
+    background: var(--bg);
+  }
+
+  .day-row-list .day-row {
+    border-bottom: 1px solid var(--border);
+  }
+
+  .day-row-list .day-row:last-child {
+    border-bottom: none;
+  }
+
+  .day-row-list .day-row.current {
+    background: rgba(255, 87, 34, 0.12);
   }
 
   /* Day dropdown selector inside the day view */
@@ -1575,6 +1640,10 @@
   const DAY_FULL_NAMES = { MON: 'MONDAY', TUE: 'TUESDAY', WED: 'WEDNESDAY', THU: 'THURSDAY', FRI: 'FRIDAY', SAT: 'SATURDAY', SUN: 'SUNDAY' };
   let pendingDayAssignment = null;
 
+  // Day-row picker open state. Module-level so toggling re-renders work.
+  // Reset on any tab change (see switchTab).
+  let dayPickerOpen = false;
+
   function getCurrentDayAssignment() {
     const result = {};
     WEEK_ORDER.forEach(d => {
@@ -1777,27 +1846,91 @@
       { id: 'data', label: 'DATA + SETNG' },
       { id: 'reminders', label: 'REMINDERS' }
     ];
-    const dayTab = { id: 'day', label: getDayLabel(), isDay: true };
 
     const renderTab = (t) => `
-      <button class="top-tab ${state.currentTab === t.id ? 'active' : ''} ${t.isDay ? 'day-tab' : ''}" data-tab="${t.id}">
+      <button class="top-tab ${state.currentTab === t.id ? 'active' : ''}" data-tab="${t.id}">
         ${t.label}
       </button>
     `;
 
+    // Day-row picker. Stage 1 (currentTab !== 'day'): just shows the current
+    // day label, no caret — clicking it switches to the day view. Stage 2
+    // (currentTab === 'day'): caret appears, clicking again expands the list
+    // of all 7 days as full-width rows matching the header row's style.
+    const onDayTab = state.currentTab === 'day';
+    const showList = onDayTab && dayPickerOpen;
+    const headerLabel = getDayLabel();
+    const caretHtml = onDayTab ? '<span class="day-row-caret"></span>' : '';
+
+    let dayListHtml = '';
+    if (showList) {
+      const weekOrder = ['MON','TUE','WED','THU','FRI','SAT','SUN'];
+      const dayEntries = Object.entries(state.workouts || {}).slice().sort((a, b) => {
+        const ai = weekOrder.indexOf(a[1].day);
+        const bi = weekOrder.indexOf(b[1].day);
+        return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
+      });
+      dayListHtml = `
+        <div class="day-row-list">
+          ${dayEntries.map(([k, w]) => `
+            <button class="day-row ${k === state.currentDay ? 'current' : ''}" data-action="day-row-pick" data-day-key="${escapeHtml(k)}">
+              <span class="day-row-label">${escapeHtml((DAY_FULL_NAMES[w.day] || w.day) + ' — ' + (w.name || '').toUpperCase())}</span>
+            </button>
+          `).join('')}
+        </div>
+      `;
+    }
+
     tabs.innerHTML = `
       <div class="top-tabs-main">${mainTabs.map(renderTab).join('')}</div>
-      <div class="top-tabs-day">${renderTab(dayTab)}</div>
+      <div class="top-tabs-day">
+        <button class="day-row day-row-header ${showList ? 'is-open' : ''}" data-action="day-row-toggle">
+          ${caretHtml}
+          <span class="day-row-label">${escapeHtml(headerLabel)}</span>
+          ${caretHtml}
+        </button>
+        ${dayListHtml}
+      </div>
     `;
 
     tabs.querySelectorAll('.top-tab').forEach(btn => {
       btn.addEventListener('click', () => {
-        // Block navigation if not yet acknowledged
         if (!state.acknowledged && btn.dataset.tab !== 'info') {
           showAck();
           return;
         }
         switchTab(btn.dataset.tab);
+      });
+    });
+
+    // Header click — stage 1 vs stage 2.
+    const headerBtn = tabs.querySelector('[data-action="day-row-toggle"]');
+    if (headerBtn) {
+      headerBtn.addEventListener('click', () => {
+        if (state.currentTab !== 'day') {
+          // Stage 1: act as a button — switch to day view (switchTab handles
+          // the acknowledgment + pending-day-assignment guards).
+          if (!state.acknowledged) { showAck(); return; }
+          switchTab('day');
+          return;
+        }
+        // Stage 2: toggle the inline list.
+        dayPickerOpen = !dayPickerOpen;
+        renderTopTabs();
+      });
+    }
+
+    // Picking a day from the list — set currentDay, close the picker.
+    tabs.querySelectorAll('[data-action="day-row-pick"]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const key = btn.dataset.dayKey;
+        if (!key) return;
+        state.currentDay = key;
+        dayPickerOpen = false;
+        saveState();
+        renderTopTabs();
+        renderContent();
+        window.scrollTo(0, 0);
       });
     });
   }
@@ -1812,6 +1945,8 @@
       return;
     }
     state.currentTab = tabId;
+    // Any tab change collapses the day picker so it doesn't linger open behind the scenes.
+    dayPickerOpen = false;
     saveState();
     renderTopTabs();
     renderContent();
@@ -1869,7 +2004,8 @@
           'Default Plank and Hanging Knee Raise on Saturday\'s Abs day now use the right input style automatically (seconds for the plank, reps-only for the knee raise).',
           'Tag-based suggestions now actually show up. Typing "tricep" used to fill the dropdown with only the explicitly-named "Tricep ___" lifts, hiding Skull Crushers, Close-Grip Bench, Dips, etc. The dropdown now mixes name matches with tag matches so category words surface the cross-cutting lifts too.',
           'Save Day enforces one history row per workout per ISO week. The first save of the week sets that week\'s date — every later save in the same week (even across midnight) updates that one row, dated to the original save. Any duplicate same-week rows from older builds collapse into the canonical one on the next Save Day.',
-          'Each history row now has a small DEL button. Tap it to permanently remove that single entry (after a confirmation prompt). Use it to clean up bad rows without wiping the whole exercise.'
+          'Each history row now has a small DEL button. Tap it to permanently remove that single entry (after a confirmation prompt). Use it to clean up bad rows without wiping the whole exercise.',
+          'The current-day row in the top tabs now doubles as a day picker. From any other tab, tapping it jumps to that day\'s view (no extra dropdown shown). Once you\'re on the day view, small carets appear flanking the row on both sides — tap again and it expands inline into all 7 days as full-width orange rows in the same Bebas Neue style. Picking one switches the day and collapses the list. The separate dropdown that used to sit at the top of the day view is gone — this row replaces it.'
         ]
       },
       {
@@ -2195,22 +2331,9 @@
 
     const workout = state.workouts[state.currentDay];
 
-    // Day dropdown — sort options by weekday order (MON-SUN) for clarity after reassignment
-    const weekOrder = ['MON','TUE','WED','THU','FRI','SAT','SUN'];
-    const sortedEntries = Object.entries(state.workouts).slice().sort((a, b) => {
-      const ai = weekOrder.indexOf(a[1].day);
-      const bi = weekOrder.indexOf(b[1].day);
-      return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
-    });
-    const dropdownHtml = `
-      <div class="day-selector">
-        <select class="day-dropdown" id="dayDropdown">
-          ${sortedEntries.map(([key, w]) =>
-            `<option value="${key}" ${key === state.currentDay ? 'selected' : ''}>${DAY_FULL_NAMES[w.day] || w.day} — ${w.name.toUpperCase()}</option>`
-          ).join('')}
-        </select>
-      </div>
-    `;
+    // Day picker now lives in the top-tab strip (#dayTabSelect). The previous
+    // in-view .day-dropdown was removed — picking a day in the top dropdown
+    // both selects the day and switches to this view in one step.
 
     // Title
     const titleHtml = `
@@ -2220,7 +2343,7 @@
 
     // Rest day display (still shows cardio if defined)
     if (workout.rest && (!workout.exercises || workout.exercises.length === 0)) {
-      content.innerHTML = dropdownHtml + titleHtml + `
+      content.innerHTML = titleHtml + `
         <div class="rest-day">
           <h2>REST</h2>
           <p>${workout.restMessage || ''}</p>
@@ -2238,7 +2361,7 @@
          <p style="text-align:center; color: var(--text-dim); font-size: 13px; margin-bottom: 20px; padding: 0 20px;">${workout.restMessage}</p>`
       : '';
 
-    content.innerHTML = dropdownHtml + titleHtml + restMessageHtml + exercisesHtml + `
+    content.innerHTML = titleHtml + restMessageHtml + exercisesHtml + `
       <button class="add-exercise" id="addExerciseBtn">+ Add Exercise</button>
       <button class="finish-day" id="finishDayBtn">SAVE DAY</button>
       <div class="finish-day-note">Logs history and resets tickers. Weight & reps stay.</div>
@@ -2413,16 +2536,8 @@
 
   // ============ DAY LISTENERS ============
   function attachDayListeners() {
-    // Day dropdown
-    const dd = document.getElementById('dayDropdown');
-    if (dd) {
-      dd.addEventListener('change', (e) => {
-        state.currentDay = e.target.value;
-        saveState();
-        renderTopTabs();
-        renderContent();
-      });
-    }
+    // Day picker lives in the top-tab strip now (#dayTabSelect, wired in
+    // renderTopTabs). No in-view dropdown to attach here anymore.
 
     // Expand/collapse
     document.querySelectorAll('.exercise-header').forEach(header => {
