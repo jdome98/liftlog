@@ -387,8 +387,14 @@
     height: 30px;
     border-radius: 50%;
     background: var(--accent);
-    margin-left: 10px;
-    margin-right: 10px;
+    /* Badge sits AFTER .last-weight in source order so its right edge is
+       anchored to the row's right padding — invariant across cards even
+       though .last-weight content (and therefore width) varies by mode
+       (weight×reps for set-based, time for cardio). margin-left is the
+       gap from LAST TOP value to badge; margin-right: 0 pins the badge
+       to the row's right edge. */
+    margin-left: 22px;
+    margin-right: 0;
     flex-shrink: 0;
     display: none;
     align-items: center;
@@ -2444,12 +2450,12 @@
               <div class="exercise-name" data-edit-name>${escapeHtml(ex.name)}</div>
               <div class="exercise-target" data-edit-target>${escapeHtml(ex.target || 'time')}</div>
             </div>
-            <div class="completion-badge" aria-label="Cardio complete">
-              <img src="/icon-192.png" alt="">
-            </div>
             <div class="last-weight">
               <span class="label">Last Top</span>
               ${lastSummary}
+            </div>
+            <div class="completion-badge" aria-label="Cardio complete">
+              <img src="/icon-192.png" alt="">
             </div>
           </div>
           <div class="sets">
@@ -2564,12 +2570,12 @@
             <div class="exercise-name" data-edit-name>${escapeHtml(ex.name)}</div>
             <div class="exercise-target" data-edit-target>${escapeHtml(ex.target)}</div>
           </div>
-          <div class="completion-badge" aria-label="All sets complete">
-            <img src="/icon-192.png" alt="">
-          </div>
           <div class="last-weight">
             <span class="label">${lastLabel}</span>
             ${lastSummary}
+          </div>
+          <div class="completion-badge" aria-label="All sets complete">
+            <img src="/icon-192.png" alt="">
           </div>
         </div>
         <div class="sets ${modeClass}">
