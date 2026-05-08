@@ -536,12 +536,12 @@
     color: var(--bg);
   }
 
-  /* Cardio row layout: Time field on the left, tick button on the right.
-     Mirrors set-based row visual rhythm — single Time field instead of a
-     set list, but the tick column is the same 50px as .set-row's. */
+  /* Cardio row layout: Time + Distance + 50px tick column. Mirrors the
+     set-based row's tick column (also 50px) so the tick aligns visually
+     with set ticks across the day. */
   .cardio-fields {
     display: grid;
-    grid-template-columns: 1fr 50px;
+    grid-template-columns: 1fr 1fr 50px;
     gap: 10px;
     align-items: end;
     margin-bottom: 8px;
@@ -2035,7 +2035,7 @@
           'Pulled that completion badge a bit further left so it no longer crowds the LAST TOP value on the right side of the row.',
           'Cardio exercises now get the same completion badge on their parent row, contingent on both Time (min) and Distance (mi) being filled in. Clearing either field hides the badge again.',
           'The cardio completion badge now lines up with the set-based ones across the workout list — the cardio row\'s Last column was narrower than the set-based rows\' Last Top column, which pushed its badge further right.',
-          'Cardio rows have been reworked to mirror the rest of the workout: the Distance field is gone, Time gets its own tick box, and the LAST TOP column shows the most recent time you logged. The completion badge now follows that tick the same way set-based badges follow their set ticks, so saving the day clears the badge.'
+          'Cardio rows now have their own tick box on the expanded row, and the parent row\'s LAST TOP column shows just the most recent time you logged (distance still lives in the expanded row, just not in the parent-row summary). The completion badge now follows that tick the same way set-based badges follow their set ticks, so saving the day clears the badge.'
         ]
       },
       {
@@ -2460,6 +2460,10 @@
               <div>
                 <label>Time (min)</label>
                 <input type="number" inputmode="decimal" placeholder="min" value="${data.cardio.time || ''}" data-cardio-field="time">
+              </div>
+              <div>
+                <label>Distance (mi)</label>
+                <input type="number" inputmode="decimal" placeholder="mi" value="${data.cardio.distance || ''}" data-cardio-field="distance">
               </div>
               <button class="set-done cardio-done ${cardioDone ? 'done' : ''}" data-cardio-done>${cardioDone ? '✓' : '○'}</button>
             </div>
@@ -3195,11 +3199,21 @@
 
       if (mode === 'cardio') {
         const data = getCardioData(ex.id);
-        if (data.cardio.time) {
-          const topTime = parseFloat(data.cardio.time) || 0;
-          const summary = `${data.cardio.time}min`;
+        if (data.cardio.time || data.cardio.distance) {
+          // Summary keeps both fields when present (history list still
+          // shows distance). topTime is only stamped when time was logged
+          // — the parent row's LAST TOP reads topTime, so distance-only
+          // saves leave LAST TOP as "—" rather than misreporting.
+          const summary = [
+            data.cardio.time ? `${data.cardio.time}min` : null,
+            data.cardio.distance ? `${data.cardio.distance}mi` : null
+          ].filter(Boolean).join(' / ');
+          const entry = { date: dateStr, iso: isoDate, summary };
+          if (data.cardio.time) {
+            entry.topTime = parseFloat(data.cardio.time) || 0;
+          }
           data.history = dropSameWeek(data.history);
-          data.history.push({ date: dateStr, iso: isoDate, summary, topTime });
+          data.history.push(entry);
           if (data.history.length > 60) data.history = data.history.slice(-60);
           // Reset the cardio tick the same way set ticks reset on save.
           data.cardio.done = false;
