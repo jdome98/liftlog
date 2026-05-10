@@ -1826,7 +1826,8 @@
       currentDay: null,
       acknowledged: false,
       timerEnabled: true,
-      timerDuration: 90
+      timerDuration: 90,
+      restEndsAt: null
     };
   }
 
@@ -1851,6 +1852,7 @@
         if (!state.currentTab) state.currentTab = 'info';
         if (typeof state.timerEnabled !== 'boolean') state.timerEnabled = true;
         if (typeof state.timerDuration !== 'number') state.timerDuration = 90;
+        if (typeof state.restEndsAt !== 'number') state.restEndsAt = null;
         // Strip deprecated cardio entry from full-rest day (rest_sun) for older saves
         if (state.workouts.rest_sun && Array.isArray(state.workouts.rest_sun.exercises)) {
           state.workouts.rest_sun.exercises = state.workouts.rest_sun.exercises.filter(e => e.id !== 'cardio_sun');
@@ -2112,6 +2114,12 @@
     // Change log — newest entry first. When pushing a new index.html with changes,
     // prepend a new { date, changes: [...] } object to the front of this array.
     const CHANGELOG = [
+      {
+        date: '2026-05-10',
+        changes: [
+          'The rest timer now survives reloads. Close the tab, lock your phone, or refresh mid-rest and the countdown picks up exactly where it left off instead of disappearing. Dismiss still clears it instantly. Behind the scenes this also lays the groundwork for the lock-screen widget that\'s in progress.'
+        ]
+      },
       {
         date: '2026-05-09',
         changes: [
@@ -3850,47 +3858,62 @@
     return `${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
   }
 
+  // Rest timer is driven by state.restEndsAt (epoch ms), so it survives
+  // reloads, tab close, and phone lock. Same field is what the future
+  // native widget bridge will mirror to iOS Live Activities / Android
+  // RemoteViews.setChronometer.
   function startRestTimer(durationSec) {
+    state.restEndsAt = Date.now() + durationSec * 1000;
+    saveState();
+    showRestPopup();
+  }
+
+  function showRestPopup() {
     const popup = document.getElementById('timerPopup');
     const valueEl = document.getElementById('timerValue');
     if (!popup || !valueEl) return;
 
-    // Clear any running timer
     if (timerInterval) {
       clearInterval(timerInterval);
       timerInterval = null;
     }
 
-    let remaining = durationSec;
-    valueEl.textContent = formatTime(remaining);
-    valueEl.classList.remove('done');
-    popup.classList.add('show');
-
-    timerInterval = setInterval(() => {
-      remaining--;
-      if (remaining <= 0) {
-        valueEl.textContent = '00:00';
-        valueEl.classList.add('done');
-        clearInterval(timerInterval);
-        timerInterval = null;
-        // Auto-hide after 3 sec when done, but only if still showing
-        setTimeout(() => {
-          if (popup.classList.contains('show') && valueEl.classList.contains('done')) {
-            popup.classList.remove('show');
-          }
-        }, 3000);
+    const tick = () => {
+      if (state.restEndsAt == null) {
+        popup.classList.remove('show');
+        if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
         return;
       }
-      valueEl.textContent = formatTime(remaining);
-    }, 1000);
+      const remainingMs = state.restEndsAt - Date.now();
+      if (remainingMs > 0) {
+        valueEl.textContent = formatTime(Math.ceil(remainingMs / 1000));
+        valueEl.classList.remove('done');
+        popup.classList.add('show');
+        return;
+      }
+      // Done — show 00:00 for 3s of grace, then auto-clear
+      valueEl.textContent = '00:00';
+      valueEl.classList.add('done');
+      popup.classList.add('show');
+      if (-remainingMs > 3000) {
+        state.restEndsAt = null;
+        saveState();
+        popup.classList.remove('show');
+        if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+      }
+    };
+    tick();
+    timerInterval = setInterval(tick, 1000);
   }
 
   function dismissTimer() {
-    const popup = document.getElementById('timerPopup');
+    state.restEndsAt = null;
+    saveState();
     if (timerInterval) {
       clearInterval(timerInterval);
       timerInterval = null;
     }
+    const popup = document.getElementById('timerPopup');
     if (popup) popup.classList.remove('show');
   }
 
@@ -3961,6 +3984,9 @@
     if (tDismiss) tDismiss.addEventListener('click', dismissTimer);
     const prDismiss = document.getElementById('prDismissBtn');
     if (prDismiss) prDismiss.addEventListener('click', dismissPR);
+
+    // Resume rest timer if one was running when the page closed/reloaded
+    if (state.restEndsAt != null) showRestPopup();
 
     // Show acknowledgment modal if first time
     if (!state.acknowledged) {
