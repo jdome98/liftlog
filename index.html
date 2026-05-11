@@ -1350,8 +1350,8 @@
 <div class="modal-overlay" id="ackModal">
   <div class="modal">
     <h3>READ FIRST — DATA WARNING</h3>
-    <p style="color: var(--text); font-size: 14px;"><strong>Your workout data lives ONLY in this browser.</strong></p>
-    <p>If you clear your browser data, switch devices, or uninstall this app, <strong>everything is gone.</strong> There is no cloud backup. There is no account.</p>
+    <p style="color: var(--text); font-size: 14px;"><strong>Your workout data lives ONLY in this install.</strong></p>
+    <p>If you clear this app's data, switch devices, or uninstall, <strong>everything is gone.</strong> There is no cloud backup. There is no account. The browser PWA and the Android app each keep their own separate data.</p>
     <p style="color: var(--text);"><strong>What you must do:</strong></p>
     <ul style="font-size: 13px; color: var(--text-dim); padding-left: 20px; margin-bottom: 12px; line-height: 1.6;">
       <li>Visit DATA + SETNG → BACKUP & RESTORE regularly</li>
@@ -2330,6 +2330,13 @@
     // prepend a new { date, changes: [...] } object to the front of this array.
     const CHANGELOG = [
       {
+        date: '2026-05-11',
+        changes: [
+          'LOCK-SCREEN WIDGET settings block in DATA + SETNG now only shows inside the Android app — it had no purpose in the browser PWA.',
+          'Data-storage warnings reworded from "in this browser" to "in this install" since the browser PWA and the Android app each keep their own separate data.'
+        ]
+      },
+      {
         date: '2026-05-10',
         changes: [
           'Rest timer survives reloads — refresh, close the tab, or lock your phone mid-rest and the countdown picks up where it left off.',
@@ -2415,7 +2422,7 @@
 
       <div class="info-section warning">
         <h3>⚠ DATA WARNING</h3>
-        <p><strong>Your data is stored only in this browser.</strong> Clearing browser data, switching devices, or uninstalling = total loss.</p>
+        <p><strong>Your data is stored only in this install.</strong> Clearing this app's data, switching devices, or uninstalling = total loss. The browser PWA and the Android app each keep their own separate copy.</p>
         <p>Visit DATA + SETNG → BACKUP & RESTORE and hit EXPORT regularly. It downloads a CSV file — save it to cloud storage or email it to yourself. Use IMPORT to restore from that CSV later. There is no cloud sync, no account, no automatic backup.</p>
       </div>
 
@@ -2543,6 +2550,10 @@
       confirmBtnDisabled = false;
     }
 
+    // Widget configuration only applies inside the Capacitor native shell —
+    // the browser PWA has no widget surface to configure.
+    const isNativeApp = !!(window.Capacitor && typeof window.Capacitor.isNativePlatform === 'function' && window.Capacitor.isNativePlatform());
+
     content.innerHTML = `
       <h1 class="page-title">DATA + SETNG</h1>
       <div class="page-subtitle">Settings · Backup · Restore · Reset</div>
@@ -2566,7 +2577,7 @@
         <p style="font-size: 12px; color: var(--text-dim); margin-top: 8px; margin-bottom: 8px;">When on, a timer pops up after each completed set. Dismiss anytime.</p>
         <p style="font-size: 12px; color: var(--text-dim); margin-bottom: 16px;">Lock-screen alerts (10-second warning + finish) play your phone's default notification chime. To pick a custom sound, open phone <strong>Settings → Apps → SPLITSTAK → Notifications</strong>, tap the channel, then choose <strong>Sound</strong>. Vibration is in the same place.</p>
 
-        <div style="border-top: 1px solid var(--border); padding-top: 14px; margin-top: 6px;">
+        ${isNativeApp ? `<div style="border-top: 1px solid var(--border); padding-top: 14px; margin-top: 6px;">
           <div style="font-family: 'Bebas Neue', sans-serif; font-size: 16px; letter-spacing: 0.08em; color: var(--accent); margin-bottom: 4px;">LOCK-SCREEN WIDGET</div>
           <p style="font-size: 12px; color: var(--text-dim); margin-bottom: 12px;">Step sizes for the ± buttons on the Android lock-screen widget. Changes take effect on the widget within a few seconds.</p>
           <div class="settings-row">
@@ -2622,7 +2633,7 @@
               </select>
             </div>
           </div>
-        </div>
+        </div>` : ''}
 
         <div style="border-top: 1px solid var(--border); padding-top: 14px; margin-top: 14px;">
           <div style="font-family: 'Bebas Neue', sans-serif; font-size: 16px; letter-spacing: 0.08em; color: var(--accent); margin-bottom: 4px;">DAY ASSIGNMENT</div>
@@ -2634,8 +2645,8 @@
 
       <div class="data-section">
         <h3>⚠ READ THIS</h3>
-        <p style="color: var(--text);"><strong>Everything you see in this app — workouts, history, customizations — lives only on this device, in this browser.</strong></p>
-        <p>If you clear browser data, switch phones, or your phone gets wiped, it's gone unless you've exported.</p>
+        <p style="color: var(--text);"><strong>Everything you see in this app — workouts, history, customizations — lives only on this device, in this install.</strong></p>
+        <p>If you clear this app's data, switch phones, or your phone gets wiped, it's gone unless you've exported. The browser PWA and the Android app each keep their own separate copy.</p>
         <p style="color: var(--text);"><strong>Export at least weekly.</strong> The EXPORT button below downloads a CSV file with all your data. Save it somewhere off this device — cloud storage, email, AirDrop, anywhere. Use IMPORT to restore from a CSV file.</p>
       </div>
 
