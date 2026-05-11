@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Header bar — solid orange with the top corners rounded so it sits flush
+  inside the widget's rounded outer container. Bottom corners square because
+  the body sits flush below.
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="@color/ss_accent" />
+    <corners
+        android:topLeftRadius="26dp"
+        android:topRightRadius="26dp"
+        android:bottomLeftRadius="0dp"
+        android:bottomRightRadius="0dp" />
+</shape>

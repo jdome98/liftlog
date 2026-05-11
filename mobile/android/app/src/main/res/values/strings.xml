@@ -1,0 +1,11 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">SPLITSTAK</string>
+    <string name="title_activity_main">SPLITSTAK</string>
+    <string name="package_name">com.splitstak.app</string>
+    <string name="custom_url_scheme">com.splitstak.app</string>
+    <string name="widget_label">SPLITSTAK Workout</string>
+    <string name="widget_description">Log sets from the lock screen.</string>
+    <string name="widget_placeholder_rest_day">Rest day</string>
+    <string name="widget_placeholder_no_workout">Open SPLITSTAK to start</string>
+</resources>

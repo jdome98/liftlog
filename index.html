@@ -1827,7 +1827,12 @@
       acknowledged: false,
       timerEnabled: true,
       timerDuration: 90,
-      restEndsAt: null
+      restEndsAt: null,
+      widgetWeightStep: 5,
+      widgetRepStep: 1,
+      widgetTimeStep: 5,
+      widgetDistanceStep: 0.5,
+      widgetHoldStep: 5
     };
   }
 
@@ -1853,6 +1858,11 @@
         if (typeof state.timerEnabled !== 'boolean') state.timerEnabled = true;
         if (typeof state.timerDuration !== 'number') state.timerDuration = 90;
         if (typeof state.restEndsAt !== 'number') state.restEndsAt = null;
+        if (typeof state.widgetWeightStep !== 'number') state.widgetWeightStep = 5;
+        if (typeof state.widgetRepStep !== 'number') state.widgetRepStep = 1;
+        if (typeof state.widgetTimeStep !== 'number') state.widgetTimeStep = 5;
+        if (typeof state.widgetDistanceStep !== 'number') state.widgetDistanceStep = 0.5;
+        if (typeof state.widgetHoldStep !== 'number') state.widgetHoldStep = 5;
         // Strip deprecated cardio entry from full-rest day (rest_sun) for older saves
         if (state.workouts.rest_sun && Array.isArray(state.workouts.rest_sun.exercises)) {
           state.workouts.rest_sun.exercises = state.workouts.rest_sun.exercises.filter(e => e.id !== 'cardio_sun');
@@ -1900,9 +1910,214 @@
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
       updateSaveIndicator('saved', '● Auto-saved');
+      publishWidgetSnapshot();
     } catch (e) {
       updateSaveIndicator('warning', '⚠ Save failed');
       console.error('Save failed:', e);
+    }
+  }
+
+  // ============ NATIVE WIDGET BRIDGE ============
+  // Only active inside the Capacitor native shell — silent no-ops in the
+  // PWA. Mirrors the current day's exercises to a native snapshot so the
+  // Android lock-screen widget can read/write set data without the WebView
+  // running, and drains widget-originated mutations on app resume.
+
+  function buildWidgetSnapshot() {
+    const empty = {
+      schemaVersion: 1, isRestDay: true, exercises: [],
+      selectedExerciseId: null, weightStep: 5, repStep: 1
+    };
+    if (!state.currentDay || !state.workouts || !state.workouts[state.currentDay]) return empty;
+    const day = state.workouts[state.currentDay];
+    if (day.rest) return { ...empty, currentDay: state.currentDay, currentDayLabel: day.name };
+
+    const exercises = (day.exercises || []).map(e => {
+      const data = state.exerciseData[e.id] || {};
+      const history = data.history || [];
+      const lastEntry = history[history.length - 1];
+      if (e.isCardio) {
+        const cardio = data.cardio || { time: '', distance: '', done: false };
+        return {
+          id: e.id, name: e.name, target: e.target || '', kind: 'cardio',
+          cardio, lastTop: null, allComplete: !!cardio.done
+        };
+      }
+      // Default sets shape varies by mode — strength uses {w,r,d}, bodyweight
+      // {r,d}, time {t,d}. Use the right placeholder so the widget can read
+      // .t for holds without falling back to weight/reps fields that won't
+      // exist in the user's actual data.
+      const defaultSetsForMode = (m) =>
+        m === 'time' ? [{t:'',d:false},{t:'',d:false},{t:'',d:false}]
+        : m === 'bodyweight' ? [{r:'',d:false},{r:'',d:false},{r:'',d:false}]
+        : [{w:'',r:'',d:false},{w:'',r:'',d:false},{w:'',r:'',d:false}];
+      const sets = (data.sets && data.sets.length)
+        ? data.sets
+        : defaultSetsForMode(e.mode || 'reps');
+      const allComplete = sets.length > 0 && sets.every(s => s.d);
+      let lastTop = '';
+      if (lastEntry && lastEntry.topWeight !== undefined) {
+        lastTop = lastEntry.topReps
+          ? `${lastEntry.topWeight} × ${lastEntry.topReps}`
+          : `${lastEntry.topWeight} lb`;
+      }
+      // mode determines the widget's set-row layout: 'reps' (default — weight + reps),
+      // 'bodyweight' (reps only), 'time' (single seconds field).
+      const mode = e.mode || 'reps';
+      // Forwarded so the widget can detect a PR locally and flip the badge
+      // glyph to "PR" when the current top beats the previous one.
+      const prevBestWeight = (lastEntry && lastEntry.topWeight !== undefined) ? lastEntry.topWeight : null;
+      const prevBestReps = (lastEntry && lastEntry.topReps !== undefined) ? lastEntry.topReps : 0;
+      return { id: e.id, name: e.name, target: e.target || '', kind: 'strength', mode, sets, lastTop, allComplete, prevBestWeight, prevBestReps };
+    });
+
+    return {
+      schemaVersion: 1,
+      isRestDay: false,
+      currentDay: state.currentDay,
+      currentDayLabel: day.name,
+      exercises,
+      selectedExerciseId: lastSelectedExerciseId || (exercises[0] && exercises[0].id) || null,
+      weightStep: state.widgetWeightStep,
+      repStep: state.widgetRepStep,
+      timeStep: state.widgetTimeStep,
+      distanceStep: state.widgetDistanceStep,
+      holdStep: state.widgetHoldStep,
+      timerEnabled: state.timerEnabled,
+      timerDuration: state.timerDuration,
+      restEndsAt: state.restEndsAt,
+      // Forwarded so the native widget can schedule the same push-worker
+      // notifications when ITS done-tap triggers a rest timer.
+      pushSubscription: pushSubscriptionJSON,
+      pushWorkerUrl: PUSH_WORKER_URL
+    };
+  }
+
+  function getWidgetPlugin() {
+    const cap = window.Capacitor;
+    if (!cap || typeof cap.isNativePlatform !== 'function' || !cap.isNativePlatform()) return null;
+    return (cap.Plugins && cap.Plugins.SplitstakWidget) || null;
+  }
+
+  async function publishWidgetSnapshot() {
+    const plugin = getWidgetPlugin();
+    if (!plugin) return;
+    try {
+      await plugin.publishSnapshot({ snapshot: buildWidgetSnapshot() });
+    } catch (e) {
+      console.warn('Widget publish failed:', e);
+    }
+  }
+
+  function applyWidgetAction(a) {
+    if (!a) return false;
+    if (a.type === 'select') {
+      if (a.exerciseId) {
+        lastSelectedExerciseId = a.exerciseId;
+        // If the selected exercise isn't on the day currently displayed,
+        // switch to the day that contains it so the highlight has a target.
+        if (state.workouts && state.currentDay) {
+          const day = state.workouts[state.currentDay];
+          const onDay = day && day.exercises && day.exercises.some(e => e.id === a.exerciseId);
+          if (!onDay) {
+            for (const dayKey in state.workouts) {
+              const d = state.workouts[dayKey];
+              if (d && d.exercises && d.exercises.some(e => e.id === a.exerciseId)) {
+                state.currentDay = dayKey;
+                break;
+              }
+            }
+          }
+        }
+      }
+      return true;
+    }
+    if (a.type === 'start_rest') {
+      if (typeof a.restEndsAt === 'number') {
+        state.restEndsAt = a.restEndsAt;
+        if (typeof showRestPopup === 'function') showRestPopup();
+      }
+      return true;
+    }
+    if (a.type === 'dismiss_rest') {
+      state.restEndsAt = null;
+      return true;
+    }
+    if (a.type === 'finish_day') {
+      // The widget's SAVE DAY pill queues this when every exercise on the
+      // day is complete. finishDay() handles its own history rewrite,
+      // saveState, and PR popup, so we don't need to flag the action as
+      // mutating — that would just trigger a redundant saveState here.
+      if (typeof finishDay === 'function') finishDay();
+      return false;
+    }
+    if (!a.exerciseId) return false;
+    const data = state.exerciseData[a.exerciseId];
+    if (!data) return false;
+    const fmt = (v) => (v === Math.floor(v) ? String(v) : v.toFixed(1));
+    if (a.type === 'inc_time') {
+      if (!data.cardio) return false;
+      const cur = parseFloat(data.cardio.time || '0') || 0;
+      const next = Math.max(0, cur + (a.delta || 0));
+      data.cardio.time = fmt(next);
+      return true;
+    }
+    if (a.type === 'inc_distance') {
+      if (!data.cardio) return false;
+      const cur = parseFloat(data.cardio.distance || '0') || 0;
+      const next = Math.max(0, cur + (a.delta || 0));
+      data.cardio.distance = fmt(next);
+      return true;
+    }
+    if (a.type === 'inc_hold') {
+      // Timed-hold mode (Plank, Dead Hang, etc.) — set has {t, d}, integer
+      // seconds. delta is already step*sign from the native side.
+      if (!data.sets || !data.sets[a.setIdx]) return false;
+      const cur = parseInt(data.sets[a.setIdx].t || '0', 10) || 0;
+      data.sets[a.setIdx].t = String(Math.max(0, cur + (a.delta || 0)));
+      return true;
+    }
+    if (a.type === 'toggle_done') {
+      // Cardio exercises store done on data.cardio; strength on data.sets[i].d.
+      if (data.cardio) {
+        data.cardio.done = !data.cardio.done;
+        return true;
+      }
+      if (data.sets && data.sets[a.setIdx]) {
+        data.sets[a.setIdx].d = !data.sets[a.setIdx].d;
+        return true;
+      }
+      return false;
+    }
+    if (!data.sets || !data.sets[a.setIdx]) return false;
+    if (a.type === 'inc_weight') {
+      const cur = parseFloat(data.sets[a.setIdx].w || '0') || 0;
+      data.sets[a.setIdx].w = String(Math.max(0, Math.round(cur + (a.delta || 0))));
+      return true;
+    }
+    if (a.type === 'inc_reps') {
+      const cur = parseInt(data.sets[a.setIdx].r || '0', 10) || 0;
+      data.sets[a.setIdx].r = String(Math.max(0, cur + (a.delta || 0)));
+      return true;
+    }
+    return false;
+  }
+
+  async function drainWidgetActions() {
+    const plugin = getWidgetPlugin();
+    if (!plugin) return;
+    try {
+      const ret = await plugin.drainPendingActions();
+      const actions = (ret && ret.actions) || [];
+      if (!actions.length) return;
+      let mutated = false;
+      for (const a of actions) if (applyWidgetAction(a)) mutated = true;
+      if (mutated) {
+        saveState();
+        renderContent();
+      }
+    } catch (e) {
+      console.warn('Widget drain failed:', e);
     }
   }
 
@@ -2117,59 +2332,57 @@
       {
         date: '2026-05-10',
         changes: [
-          'The rest timer now survives reloads. Close the tab, lock your phone, or refresh mid-rest and the countdown picks up exactly where it left off instead of disappearing. Dismiss still clears it instantly. Behind the scenes this also lays the groundwork for the lock-screen widget that\'s in progress.',
-          'Rest timer now plays three sine-tone beeps when the app is open: a short start tone, three quick beeps when ten seconds remain, and a single brighter tone when it hits 00:00. The three tones are musically related (start, perfect fifth above, octave above) so the kit sounds like one set. Beeps mix with whatever music app you have running — they no longer take over the media session and pause Spotify. On Chrome on Android and Safari on iOS 16.4+, music volume briefly dims for each beep and restores after. iOS silent / Focus modes still mute the beeps; keep the ringer on.',
-          'Rest timer alerts now also fire when the phone screen is locked. Granting notification permission (asked the first time you start a timer) routes the warning and finish phases to your lock screen as notifications labelled "⚠ 10 seconds left" and "✓ Rest complete". When the app is open you hear the in-page tones above instead — never both. The notification sound and vibration are user-customizable per phone via Settings → Apps → SPLITSTAK → Notifications → channel; SETTINGS card now has a small note pointing at this. iOS lock-screen support is best-effort due to ongoing Apple Web Push limitations.'
+          'Rest timer survives reloads — refresh, close the tab, or lock your phone mid-rest and the countdown picks up where it left off.',
+          'Rest timer beeps at start, ten-seconds-left, and finish. Tones mix with your music instead of pausing it.',
+          'Rest timer alerts now fire on the lock screen too — "10 seconds left" and "Rest complete" notifications. Sound and vibration are customizable in your phone\'s SPLITSTAK notification settings.',
+          'New Android lock-screen widget — log sets, swap exercises, watch the rest timer, and SAVE DAY without unlocking. Supports strength, bodyweight, timed-hold, and cardio modes. Step sizes for the ± buttons are configurable in DATA + SETNG → LOCK-SCREEN WIDGET. Android only for now; APK side-load.'
         ]
       },
       {
         date: '2026-05-09',
         changes: [
-          'The exercise you\'re currently logging now stays highlighted in orange — the parent row turns orange when you tap an exercise to open it, and stays orange even after you collapse it, so you can spot at a glance which one you were last working on. Opening a different exercise moves the highlight to it. The dropdown gets a matching orange border so it visually belongs to the highlighted parent.'
+          'The exercise you\'re currently logging stays highlighted in orange even after you collapse it, so you can spot where you left off.'
         ]
       },
       {
         date: '2026-05-08',
         changes: [
-          'Exercises now show a small orange completion badge on the parent row once every tick box for that exercise is checked, so a finished exercise is recognizable at a glance without expanding the row.',
-          'Cardio rows have their own tick box on the expanded row that drives the same badge, and the parent row\'s LAST TOP column shows the most recent time you logged (distance still lives in the expanded row).'
+          'Finished exercises show an orange completion badge on the parent row so you can see them at a glance.',
+          'Cardio rows have their own tick box and show your last time in LAST TOP.'
         ]
       },
       {
         date: '2026-05-07',
         changes: [
-          'The exercise autocomplete library is dramatically larger — full coverage of barbell, dumbbell, Smith machine, cable, and bodyweight variations across chest, back, shoulders, arms, legs, calves, abs, and grip work.',
-          'Suggestions are smarter. Typing "tricep" surfaces Skull Crushers, Pushdowns, and Close-Grip Bench even though "tricep" isn\'t in their names. Typing "incline" filters to incline variations across muscle groups. Tags and aliases now match alongside names.',
-          'Suggestions appear directly under what you\'re typing again, not at the bottom of the row card. Picking one no longer requires scrolling on mobile.',
-          'Targets reviewed for accuracy. Single-side lifts (Bulgarian Split Squat, Concentration Curl, Single-Arm Row, etc.) now end in "ea" so it\'s clear the rep count is per side.',
-          'Exercise cards now mold to the lift. Plank, Side Plank, L-Sit, Dead Hang, Farmer\'s Walk, and other holds show a single seconds field instead of weight + reps. Push-ups, Pull-ups, Hanging Leg Raises, and other bodyweight reps drop the weight column.',
-          'Long-press an exercise name or target to edit it (instead of double-click). One steady press, no awkward double-tap on mobile.',
-          'Picking a library suggestion now also resets that exercise\'s set rows to the right shape — no leftover weight/reps lingering when you switch a card to a hold or bodyweight movement.',
-          'Default Plank and Hanging Knee Raise on Saturday\'s Abs day now use the right input style automatically (seconds for the plank, reps-only for the knee raise).',
-          'Tag-based suggestions now actually show up. Typing "tricep" used to fill the dropdown with only the explicitly-named "Tricep ___" lifts, hiding Skull Crushers, Close-Grip Bench, Dips, etc. The dropdown now mixes name matches with tag matches so category words surface the cross-cutting lifts too.',
-          'Save Day enforces one history row per workout per ISO week. The first save of the week sets that week\'s date — every later save in the same week (even across midnight) updates that one row, dated to the original save. Any duplicate same-week rows from older builds collapse into the canonical one on the next Save Day.',
-          'Each history row now has a small DEL button. Tap it to permanently remove that single entry (after a confirmation prompt). Use it to clean up bad rows without wiping the whole exercise.',
-          'The current-day row in the top tabs now doubles as a day picker. From any other tab, tapping it jumps to that day\'s view (no extra dropdown shown). Once you\'re on the day view, small carets appear flanking the row on both sides — tap again and it expands inline into all 7 days as full-width orange rows in the same Bebas Neue style. Picking one switches the day and collapses the list. The separate dropdown that used to sit at the top of the day view is gone — this row replaces it.',
-          'Save Day now stamps history entries with your LOCAL calendar date instead of the UTC date. Previously a save late on Sunday evening could land on Monday\'s row because UTC had already rolled over. New saves classify the ISO week from your local clock so the weekly rollover lines up with midnight in your time zone. Existing history entries are untouched — only future saves use the new rule.'
+          'Exercise autocomplete library is much larger — full coverage across all muscle groups and equipment types.',
+          'Autocomplete is smarter — typing "tricep" surfaces Skull Crushers and Close-Grip Bench; typing "incline" filters to incline variations.',
+          'Autocomplete suggestions appear directly under what you\'re typing instead of at the bottom of the card.',
+          'Single-side lifts now show "ea" on the rep count so per-side is clear.',
+          'Exercise cards adapt to the lift — holds show seconds, bodyweight reps drop the weight column.',
+          'Long-press an exercise name or target to edit it instead of double-tapping.',
+          'Picking a library suggestion auto-switches the set rows to the right shape.',
+          'Saturday\'s Plank and Hanging Knee Raise use the right input style by default.',
+          'Save Day keeps one history row per workout per ISO week. Re-saves in the same week update that row instead of creating duplicates.',
+          'Each history row has a DEL button to remove that entry without wiping the rest.',
+          'The current-day row in the top tabs is now also the day picker. Tap once to jump to today; on the day view, tap again to expand all 7 days inline.',
+          'Save Day uses your local date for history entries — late-night saves no longer roll into the wrong week.'
         ]
       },
       {
         date: '2026-05-06',
         changes: [
-          'You can now install SPLITSTAK on your phone or computer like a real app — Add to Home Screen on iPhone, or Install on Android and desktop Chrome.',
-          'Export and Import are now CSV files. Export downloads a spreadsheet you can open in Excel or Google Sheets. Import accepts the same CSV back.',
-          'DAY ASSIGNMENT has a new "Custom..." option at the bottom of each day\'s dropdown. Pick it to type your own workout name (e.g., CHEST/TRI instead of PUSH).',
-          'The current day tab moved to its own row below INFO / DATA + SETNG / REMINDERS, centered and slightly larger.',
-          'Tapping an exercise no longer triggers edit mode by mistake. Double-tap an exercise name or target to edit them.',
-          'The Delete Exercise button is now orange so it\'s easier to spot inside an expanded exercise.',
-          'New "FOR BEGINNERS" card on the INFO tab — the default split is followable as-is for newcomers.',
-          'Day names are now spelled out in full (TUESDAY instead of TUE) on the day tab, the day-view dropdown, and the DAY ASSIGNMENT rows.',
-          'The day tab text is a bit larger now so it reads as the dominant nav element.',
-          'Cleaned up the active rest day subtitle — it now just reads "Light Cardio".',
-          'Picking "Custom..." on an unassigned day now creates a new workout with your typed name and slots it into that day.',
-          'Once every weekday has a workout, the orange "pick this" highlight goes away — no visual noise once everything is settled.',
-          'The top tabs now slide up out of the way when you scroll down through a workout, and slide back when you scroll up. The SPLITSTAK header stays put.',
-          'Updated all data-warning copy across the app to mention the CSV file flow specifically — Export downloads a CSV, Import accepts a CSV.'
+          'SPLITSTAK installs like a real app — Add to Home Screen on iPhone, Install on Android and Chrome.',
+          'Export and Import are now CSV files openable in Excel or Google Sheets.',
+          'DAY ASSIGNMENT has a "Custom..." option to name your own workouts — works on unassigned days too, creating a new one.',
+          'The current day tab moved to its own row, larger and centered.',
+          'Single taps no longer trigger edit mode — double-tap to edit exercise names and targets.',
+          'Delete Exercise button is now orange.',
+          'New FOR BEGINNERS card on the INFO tab — the default split works as-is for newcomers.',
+          'Day names spelled out in full (TUESDAY instead of TUE) across the app.',
+          'Active rest day subtitle now just reads "Light Cardio".',
+          'The orange "pick this" highlight disappears once every weekday has a workout.',
+          'Top tabs slide up out of the way when scrolling down, slide back on scroll up.',
+          'Data-warning copy now mentions the CSV file flow explicitly.'
         ]
       },
       {
@@ -2177,13 +2390,13 @@
         changes: [
           'Change Log is now a dropdown — pick a date to read that day\'s entries.',
           'Sunday\'s full rest day no longer shows a cardio row.',
-          'The app opens to today\'s workout every time you launch it (instead of whatever day you had selected last).',
-          'Import: pressing RESTORE now closes the import box first, so the confirmation popup is visible (it used to hide behind).',
-          'Day Assignment overhauled: pick each day\'s workout independently. Picking a workout from another day frees that day. The dropdown shows the floating workout in orange so you know which one fills a missing day.',
-          'New orange CONFIRM button locks Day Assignment changes in. You can\'t leave DATA + SETNG until every day has a workout and CONFIRM is pressed.',
-          'INFO tab condensed: tutorial topics now live in a single dropdown card, plus this Change Log.',
+          'App always opens to today\'s workout.',
+          'Import: RESTORE closes the import box before showing the confirmation.',
+          'Day Assignment overhauled — pick each day independently. Picking a workout from another day frees that day, shown in orange until reassigned.',
+          'New CONFIRM button locks Day Assignment changes in — required before leaving DATA + SETNG.',
+          'INFO tab condensed — tutorial topics now live in a single dropdown.',
           '"Danger Zone" renamed to DATA WIPE.',
-          'Deleting an exercise now also clears its hidden saved data so your export stays small over time.',
+          'Deleting an exercise also clears its saved data so exports stay small.',
           'Lift Log is now SPLITSTAK.'
         ]
       }
@@ -2341,6 +2554,64 @@
         <p style="font-size: 12px; color: var(--text-dim); margin-bottom: 16px;">Lock-screen alerts (10-second warning + finish) play your phone's default notification chime. To pick a custom sound, open phone <strong>Settings → Apps → SPLITSTAK → Notifications</strong>, tap the channel, then choose <strong>Sound</strong>. Vibration is in the same place.</p>
 
         <div style="border-top: 1px solid var(--border); padding-top: 14px; margin-top: 6px;">
+          <div style="font-family: 'Bebas Neue', sans-serif; font-size: 16px; letter-spacing: 0.08em; color: var(--accent); margin-bottom: 4px;">LOCK-SCREEN WIDGET</div>
+          <p style="font-size: 12px; color: var(--text-dim); margin-bottom: 12px;">Step sizes for the ± buttons on the Android lock-screen widget. Changes take effect on the widget within a few seconds.</p>
+          <div class="settings-row">
+            <div class="label">Weight</div>
+            <div class="controls">
+              <select id="widgetWeightStepSelect">
+                <option value="1" ${state.widgetWeightStep === 1 ? 'selected' : ''}>1 lb</option>
+                <option value="2.5" ${state.widgetWeightStep === 2.5 ? 'selected' : ''}>2.5 lb</option>
+                <option value="5" ${state.widgetWeightStep === 5 ? 'selected' : ''}>5 lb</option>
+                <option value="10" ${state.widgetWeightStep === 10 ? 'selected' : ''}>10 lb</option>
+              </select>
+            </div>
+          </div>
+          <div class="settings-row">
+            <div class="label">Reps</div>
+            <div class="controls">
+              <select id="widgetRepStepSelect">
+                <option value="1" ${state.widgetRepStep === 1 ? 'selected' : ''}>1</option>
+                <option value="2" ${state.widgetRepStep === 2 ? 'selected' : ''}>2</option>
+                <option value="5" ${state.widgetRepStep === 5 ? 'selected' : ''}>5</option>
+              </select>
+            </div>
+          </div>
+          <div class="settings-row">
+            <div class="label">Cardio time</div>
+            <div class="controls">
+              <select id="widgetTimeStepSelect">
+                <option value="1" ${state.widgetTimeStep === 1 ? 'selected' : ''}>1 min</option>
+                <option value="5" ${state.widgetTimeStep === 5 ? 'selected' : ''}>5 min</option>
+                <option value="10" ${state.widgetTimeStep === 10 ? 'selected' : ''}>10 min</option>
+              </select>
+            </div>
+          </div>
+          <div class="settings-row">
+            <div class="label">Cardio distance</div>
+            <div class="controls">
+              <select id="widgetDistanceStepSelect">
+                <option value="0.1" ${state.widgetDistanceStep === 0.1 ? 'selected' : ''}>0.1 mi</option>
+                <option value="0.25" ${state.widgetDistanceStep === 0.25 ? 'selected' : ''}>0.25 mi</option>
+                <option value="0.5" ${state.widgetDistanceStep === 0.5 ? 'selected' : ''}>0.5 mi</option>
+                <option value="1" ${state.widgetDistanceStep === 1 ? 'selected' : ''}>1 mi</option>
+              </select>
+            </div>
+          </div>
+          <div class="settings-row">
+            <div class="label">Timed hold</div>
+            <div class="controls">
+              <select id="widgetHoldStepSelect">
+                <option value="1" ${state.widgetHoldStep === 1 ? 'selected' : ''}>1 sec</option>
+                <option value="5" ${state.widgetHoldStep === 5 ? 'selected' : ''}>5 sec</option>
+                <option value="10" ${state.widgetHoldStep === 10 ? 'selected' : ''}>10 sec</option>
+                <option value="15" ${state.widgetHoldStep === 15 ? 'selected' : ''}>15 sec</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div style="border-top: 1px solid var(--border); padding-top: 14px; margin-top: 14px;">
           <div style="font-family: 'Bebas Neue', sans-serif; font-size: 16px; letter-spacing: 0.08em; color: var(--accent); margin-bottom: 4px;">DAY ASSIGNMENT</div>
           <p style="font-size: 12px; color: var(--text-dim); margin-bottom: 12px;">Independently pick a workout for each weekday. Each workout can only sit on one day at a time — picking a workout that's already on another day frees that day up so you can reassign it. Press CONFIRM to lock changes in. You can't leave this page until every day has its own workout and CONFIRM is pressed.</p>
           ${dayRowsHtml}
@@ -2389,6 +2660,27 @@
         saveState();
       });
     }
+
+    // Wire up widget step-size selects. Changes are saved + republished to
+    // the native widget snapshot via saveState → publishWidgetSnapshot.
+    const widgetSteps = [
+      ['widgetWeightStepSelect', 'widgetWeightStep'],
+      ['widgetRepStepSelect',    'widgetRepStep'],
+      ['widgetTimeStepSelect',   'widgetTimeStep'],
+      ['widgetDistanceStepSelect', 'widgetDistanceStep'],
+      ['widgetHoldStepSelect',   'widgetHoldStep']
+    ];
+    widgetSteps.forEach(([selId, stateKey]) => {
+      const sel = document.getElementById(selId);
+      if (!sel) return;
+      sel.addEventListener('change', (e) => {
+        const v = parseFloat(e.target.value);
+        if (!isNaN(v) && v > 0) {
+          state[stateKey] = v;
+          saveState();
+        }
+      });
+    });
 
     // Wire up Day Assignment dropdowns — independent assignment, no auto-swap.
     // Picking a workout already on another day clears that other day; user must reassign it.
@@ -3333,10 +3625,13 @@
           data.history = dropSameWeek(data.history);
           data.history.push(entry);
           if (data.history.length > 60) data.history = data.history.slice(-60);
-          // Reset the cardio tick the same way set ticks reset on save.
-          data.cardio.done = false;
           savedCount++;
         }
+        // Always reset the tick on SAVE DAY — even if nothing was logged
+        // for this exercise, the user explicitly said "I'm done with today"
+        // and expects a clean slate next session. Mirrors the widget SAVE
+        // DAY pill's expectation that ticks reset everywhere.
+        data.cardio.done = false;
         return;
       }
 
@@ -3344,56 +3639,64 @@
 
       if (mode === 'time') {
         const validSets = data.sets.filter(s => s.t);
-        if (validSets.length === 0) return;
-        const topTime = Math.max(...validSets.map(s => parseFloat(s.t) || 0));
-        const summary = validSets.map(s => `${s.t}s`).join(', ');
+        if (validSets.length > 0) {
+          const topTime = Math.max(...validSets.map(s => parseFloat(s.t) || 0));
+          const summary = validSets.map(s => `${s.t}s`).join(', ');
 
-        // Collapse same-week first; PR check then runs against truly older history.
-        data.history = dropSameWeek(data.history);
-        let prevBest = null;
-        data.history.forEach(h => {
-          if (h.topTime === undefined) return;
-          if (!prevBest || h.topTime > prevBest.topTime) prevBest = h;
-        });
-        const isPR = !prevBest || topTime > prevBest.topTime;
-        if (isPR && topTime > 0) {
-          newPRs.push({ name: ex.name, time: topTime, prev: prevBest ? { time: prevBest.topTime } : null });
+          // Collapse same-week first; PR check then runs against truly older history.
+          data.history = dropSameWeek(data.history);
+          let prevBest = null;
+          data.history.forEach(h => {
+            if (h.topTime === undefined) return;
+            if (!prevBest || h.topTime > prevBest.topTime) prevBest = h;
+          });
+          const isPR = !prevBest || topTime > prevBest.topTime;
+          if (isPR && topTime > 0) {
+            newPRs.push({ name: ex.name, time: topTime, prev: prevBest ? { time: prevBest.topTime } : null });
+          }
+
+          data.history.push({ date: dateStr, iso: isoDate, summary, topTime });
+          if (data.history.length > 60) data.history = data.history.slice(-60);
+          savedCount++;
         }
-
-        data.history.push({ date: dateStr, iso: isoDate, summary, topTime });
-        if (data.history.length > 60) data.history = data.history.slice(-60);
         data.sets.forEach(s => { s.d = false; });
-        savedCount++;
         return;
       }
 
       if (mode === 'bodyweight') {
         const validSets = data.sets.filter(s => s.r);
-        if (validSets.length === 0) return;
-        const topReps = Math.max(...validSets.map(s => parseInt(s.r) || 0));
-        const summary = validSets.map(s => `${s.r}`).join(', ');
+        if (validSets.length > 0) {
+          const topReps = Math.max(...validSets.map(s => parseInt(s.r) || 0));
+          const summary = validSets.map(s => `${s.r}`).join(', ');
 
-        data.history = dropSameWeek(data.history);
-        let prevBest = null;
-        data.history.forEach(h => {
-          if (h.topReps === undefined || h.topWeight !== undefined) return;
-          if (!prevBest || h.topReps > prevBest.topReps) prevBest = h;
-        });
-        const isPR = !prevBest || topReps > (prevBest.topReps || 0);
-        if (isPR && topReps > 0) {
-          newPRs.push({ name: ex.name, reps: topReps, prev: prevBest ? { reps: prevBest.topReps || 0 } : null });
+          data.history = dropSameWeek(data.history);
+          let prevBest = null;
+          data.history.forEach(h => {
+            if (h.topReps === undefined || h.topWeight !== undefined) return;
+            if (!prevBest || h.topReps > prevBest.topReps) prevBest = h;
+          });
+          const isPR = !prevBest || topReps > (prevBest.topReps || 0);
+          if (isPR && topReps > 0) {
+            newPRs.push({ name: ex.name, reps: topReps, prev: prevBest ? { reps: prevBest.topReps || 0 } : null });
+          }
+
+          data.history.push({ date: dateStr, iso: isoDate, summary, topReps });
+          if (data.history.length > 60) data.history = data.history.slice(-60);
+          savedCount++;
         }
-
-        data.history.push({ date: dateStr, iso: isoDate, summary, topReps });
-        if (data.history.length > 60) data.history = data.history.slice(-60);
         data.sets.forEach(s => { s.d = false; });
-        savedCount++;
         return;
       }
 
       // mode === 'reps' (default standard weight + reps)
       const validSets = data.sets.filter(s => s.w && s.r);
-      if (validSets.length === 0) return;
+      if (validSets.length === 0) {
+        // Still reset the ticks — user pressed SAVE DAY, that intent stands
+        // even when no values were entered (e.g. ticking on the widget
+        // without ± buttons).
+        data.sets.forEach(s => { s.d = false; });
+        return;
+      }
 
       const topWeight = Math.max(...validSets.map(s => parseFloat(s.w) || 0));
       // Find highest rep count among sets at the top weight
@@ -3436,14 +3739,17 @@
       savedCount++;
     });
 
-    if (savedCount === 0) {
-      showToast('Log some sets first');
-      return;
-    }
-
+    // Persist + re-render unconditionally — even when nothing was logged,
+    // SAVE DAY still resets done flags (see per-mode reset above) and we
+    // need that to land in localStorage and on the widget snapshot.
     saveState();
     renderContent();
-    showToast(`Saved ${savedCount}`);
+
+    if (savedCount === 0) {
+      showToast('Day reset');
+    } else {
+      showToast(`Saved ${savedCount}`);
+    }
 
     // Show PR popup after a brief delay so the toast doesn't compete
     if (newPRs.length > 0) {
@@ -4208,6 +4514,20 @@
   }
 
   async function schedulePushBeeps(durationSec) {
+    // In the Capacitor native build, hand off to the native local-notification
+    // pipeline. Web Push doesn't subscribe reliably under capacitor://localhost,
+    // and local notifications are simpler + more reliable anyway.
+    const widget = getWidgetPlugin();
+    if (widget && widget.scheduleLocalRestNotifications) {
+      try {
+        await widget.scheduleLocalRestNotifications({
+          restEndsAt: Date.now() + durationSec * 1000
+        });
+        return;
+      } catch (e) {
+        console.warn('Native rest notifications failed; falling through to web push:', e);
+      }
+    }
     if (pushDisabled) return;
     const sub = await getOrSubscribePush();
     if (!sub) return;
@@ -4233,6 +4553,13 @@
   }
 
   async function cancelPushBeeps() {
+    const widget = getWidgetPlugin();
+    if (widget && widget.cancelLocalRestNotifications) {
+      try {
+        await widget.cancelLocalRestNotifications();
+        return;
+      } catch (e) {}
+    }
     if (pushDisabled || !pushSubscriptionJSON) return;
     try {
       await fetch(PUSH_WORKER_URL + '/unschedule', {
@@ -4345,6 +4672,14 @@
 
     // Resume rest timer if one was running when the page closed/reloaded
     if (state.restEndsAt != null) showRestPopup();
+
+    // Native widget bridge: pull any mutations the widget made while the
+    // WebView was dormant, then push the freshest snapshot back. Pull on
+    // every foreground transition too.
+    drainWidgetActions().then(publishWidgetSnapshot);
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) drainWidgetActions();
+    });
 
     // Show acknowledgment modal if first time
     if (!state.acknowledged) {

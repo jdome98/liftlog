@@ -2,3 +2,29 @@ node_modules/
 package.json
 package-lock.json
 .claude/
+
+# Capacitor / native build chain
+mobile/node_modules/
+mobile/www/
+mobile/android/.gradle/
+mobile/android/local.properties
+mobile/android/build/
+mobile/android/app/build/
+mobile/android/app/release/
+mobile/android/.idea/
+mobile/android/captures/
+mobile/ios/App/Pods/
+mobile/ios/App/build/
+mobile/ios/DerivedData/
+
+# Local dev / tunnel artifacts
+.tunnel/
+
+# Built artifacts
+*.apk
+*.aab
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.log

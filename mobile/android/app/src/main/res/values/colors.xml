@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="ss_bg">#0a0a0a</color>
+    <color name="ss_bg_elevated">#161616</color>
+    <color name="ss_text">#f5f5f5</color>
+    <color name="ss_text_dim">#888888</color>
+    <color name="ss_text_faint">#555555</color>
+    <color name="ss_accent">#ff5722</color>
+    <color name="ss_accent_dim">#4a1a08</color>
+    <color name="ss_border">#2a2a2a</color>
+</resources>

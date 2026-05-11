@@ -1,0 +1,609 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Mirrors the SPLITSTAK app's `.exercise.last-selected` card. Outer container
+  has surface bg + 1dp accent border. The header bar inside is solid orange
+  with inverted (black) text/icons; the body sits below with dark surface.
+  Set rows use weight=1 so they expand vertically when the widget is
+  resized; numerics use autoSizeTextType so digits scale with row height.
+  The only view that launches the full app is the launch icon in the
+  header. All other taps fall through to a no-op intent set on the root
+  by the provider, so empty-area taps don't accidentally open the app.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@android:id/background"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@drawable/widget_bg">
+
+    <!-- Orange header bar — like .exercise.last-selected .exercise-header -->
+    <LinearLayout
+        android:id="@+id/header_bar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:padding="10dp"
+        android:background="@drawable/widget_header_bg">
+
+        <ImageView
+            android:id="@+id/btn_prev"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:src="@drawable/ic_widget_chevron_left"
+            android:scaleType="center"
+            android:contentDescription="Previous exercise" />
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:paddingStart="6dp"
+            android:paddingEnd="6dp">
+
+            <TextView
+                android:id="@+id/exercise_name"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFamily="sans-serif-condensed"
+                android:textStyle="bold"
+                android:textAllCaps="true"
+                android:textSize="15sp"
+                android:letterSpacing="0.04"
+                android:textColor="@color/ss_bg"
+                android:singleLine="true"
+                android:ellipsize="end"
+                android:text="Exercise" />
+
+            <TextView
+                android:id="@+id/exercise_meta"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFamily="monospace"
+                android:textStyle="bold"
+                android:textSize="11sp"
+                android:textColor="@color/ss_bg"
+                android:letterSpacing="0.05"
+                android:singleLine="true"
+                android:ellipsize="end"
+                android:text="" />
+
+            <TextView
+                android:id="@+id/progress_dots"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFamily="monospace"
+                android:textSize="11sp"
+                android:textColor="@color/ss_bg"
+                android:letterSpacing="0.15"
+                android:singleLine="true"
+                android:text="" />
+        </LinearLayout>
+
+        <ImageView
+            android:id="@+id/btn_next"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:src="@drawable/ic_widget_chevron_right"
+            android:scaleType="center"
+            android:contentDescription="Next exercise" />
+
+        <ImageView
+            android:id="@+id/btn_open_app"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:src="@drawable/ic_widget_launch"
+            android:scaleType="center"
+            android:contentDescription="Open SPLITSTAK" />
+
+        <TextView
+            android:id="@+id/badge"
+            android:layout_width="wrap_content"
+            android:layout_height="28dp"
+            android:minWidth="28dp"
+            android:layout_marginStart="6dp"
+            android:gravity="center"
+            android:fontFamily="sans-serif-condensed"
+            android:textStyle="bold"
+            android:textSize="13sp"
+            android:textColor="@color/ss_accent"
+            android:background="@drawable/widget_badge_inverse_bg"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp"
+            android:visibility="gone"
+            android:contentDescription="Complete"
+            android:text="✓" />
+
+        <TextView
+            android:id="@+id/save_day_btn"
+            android:layout_width="wrap_content"
+            android:layout_height="28dp"
+            android:layout_marginStart="6dp"
+            android:gravity="center"
+            android:fontFamily="sans-serif-condensed"
+            android:textStyle="bold"
+            android:textAllCaps="true"
+            android:letterSpacing="0.08"
+            android:textSize="11sp"
+            android:textColor="@color/ss_accent"
+            android:background="@drawable/widget_dismiss_bg"
+            android:paddingStart="10dp"
+            android:paddingEnd="10dp"
+            android:visibility="gone"
+            android:contentDescription="Save day"
+            android:text="Save Day" />
+    </LinearLayout>
+
+    <!-- Body — dark interior, contains sub-header + set rows or placeholder -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:orientation="vertical"
+        android:padding="10dp">
+
+        <!-- Column sub-headers: WEIGHT  REPS -->
+        <LinearLayout
+            android:id="@+id/columns_header"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <TextView
+                android:layout_width="32dp"
+                android:layout_height="wrap_content"
+                android:text="" />
+
+            <TextView
+                android:id="@+id/column_label_left"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:fontFamily="monospace"
+                android:textSize="9sp"
+                android:textAllCaps="true"
+                android:letterSpacing="0.1"
+                android:textColor="@color/ss_text_faint"
+                android:gravity="center"
+                android:text="Weight" />
+
+            <TextView
+                android:id="@+id/column_label_right"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:fontFamily="monospace"
+                android:textSize="9sp"
+                android:textAllCaps="true"
+                android:letterSpacing="0.1"
+                android:textColor="@color/ss_text_faint"
+                android:gravity="center"
+                android:layout_marginStart="6dp"
+                android:text="Reps" />
+
+            <TextView
+                android:layout_width="44dp"
+                android:layout_height="wrap_content"
+                android:text="" />
+        </LinearLayout>
+
+        <!-- Set 1 -->
+        <LinearLayout
+            android:id="@+id/set_row_0"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:layout_marginTop="6dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <TextView
+                android:id="@+id/set_label_0"
+                android:layout_width="32dp"
+                android:layout_height="match_parent"
+                android:fontFamily="sans-serif-condensed"
+                android:textStyle="bold"
+                android:textSize="22sp"
+                android:textColor="@color/ss_text_dim"
+                android:gravity="center"
+                android:autoSizeTextType="uniform"
+                android:autoSizeMinTextSize="14sp"
+                android:autoSizeMaxTextSize="32sp"
+                android:autoSizeStepGranularity="1sp"
+                android:text="1" />
+
+            <LinearLayout
+                android:id="@+id/weight_col_0"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+                <ImageView
+                    android:id="@+id/btn_w_minus_0"
+                    android:layout_width="36dp"
+                    android:layout_height="match_parent"
+                    android:background="@drawable/widget_btn_bg"
+                    android:src="@drawable/ic_widget_minus"
+                    android:scaleType="center"
+                    android:contentDescription="Decrease weight" />
+                <TextView
+                    android:id="@+id/weight_0"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:background="@drawable/widget_value_bg"
+                    android:fontFamily="monospace"
+                    android:textColor="@color/ss_text"
+                    android:gravity="center"
+                    android:autoSizeTextType="uniform"
+                    android:autoSizeMinTextSize="11sp"
+                    android:autoSizeMaxTextSize="22sp"
+                    android:autoSizeStepGranularity="1sp"
+                    android:text="—" />
+                <ImageView
+                    android:id="@+id/btn_w_plus_0"
+                    android:layout_width="36dp"
+                    android:layout_height="match_parent"
+                    android:background="@drawable/widget_btn_bg"
+                    android:src="@drawable/ic_widget_plus"
+                    android:scaleType="center"
+                    android:contentDescription="Increase weight" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:layout_marginStart="6dp"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+                <ImageView
+                    android:id="@+id/btn_r_minus_0"
+                    android:layout_width="36dp"
+                    android:layout_height="match_parent"
+                    android:background="@drawable/widget_btn_bg"
+                    android:src="@drawable/ic_widget_minus"
+                    android:scaleType="center"
+                    android:contentDescription="Decrease reps" />
+                <TextView
+                    android:id="@+id/reps_0"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:background="@drawable/widget_value_bg"
+                    android:fontFamily="monospace"
+                    android:textColor="@color/ss_text"
+                    android:gravity="center"
+                    android:autoSizeTextType="uniform"
+                    android:autoSizeMinTextSize="11sp"
+                    android:autoSizeMaxTextSize="22sp"
+                    android:autoSizeStepGranularity="1sp"
+                    android:text="—" />
+                <ImageView
+                    android:id="@+id/btn_r_plus_0"
+                    android:layout_width="36dp"
+                    android:layout_height="match_parent"
+                    android:background="@drawable/widget_btn_bg"
+                    android:src="@drawable/ic_widget_plus"
+                    android:scaleType="center"
+                    android:contentDescription="Increase reps" />
+            </LinearLayout>
+
+            <ImageView
+                android:id="@+id/btn_done_0"
+                android:layout_width="40dp"
+                android:layout_height="match_parent"
+                android:layout_marginStart="6dp"
+                android:background="@drawable/widget_done_off_bg"
+                android:src="@drawable/ic_widget_check"
+                android:scaleType="center"
+                android:contentDescription="Toggle done" />
+        </LinearLayout>
+
+        <!-- Set 2 -->
+        <LinearLayout
+            android:id="@+id/set_row_1"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:layout_marginTop="4dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <TextView
+                android:id="@+id/set_label_1"
+                android:layout_width="32dp"
+                android:layout_height="match_parent"
+                android:fontFamily="sans-serif-condensed"
+                android:textStyle="bold"
+                android:textSize="22sp"
+                android:textColor="@color/ss_text_dim"
+                android:gravity="center"
+                android:autoSizeTextType="uniform"
+                android:autoSizeMinTextSize="14sp"
+                android:autoSizeMaxTextSize="32sp"
+                android:autoSizeStepGranularity="1sp"
+                android:text="2" />
+
+            <LinearLayout
+                android:id="@+id/weight_col_1"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+                <ImageView
+                    android:id="@+id/btn_w_minus_1"
+                    android:layout_width="36dp"
+                    android:layout_height="match_parent"
+                    android:background="@drawable/widget_btn_bg"
+                    android:src="@drawable/ic_widget_minus"
+                    android:scaleType="center"
+                    android:contentDescription="Decrease weight" />
+                <TextView
+                    android:id="@+id/weight_1"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:background="@drawable/widget_value_bg"
+                    android:fontFamily="monospace"
+                    android:textColor="@color/ss_text"
+                    android:gravity="center"
+                    android:autoSizeTextType="uniform"
+                    android:autoSizeMinTextSize="11sp"
+                    android:autoSizeMaxTextSize="22sp"
+                    android:autoSizeStepGranularity="1sp"
+                    android:text="—" />
+                <ImageView
+                    android:id="@+id/btn_w_plus_1"
+                    android:layout_width="36dp"
+                    android:layout_height="match_parent"
+                    android:background="@drawable/widget_btn_bg"
+                    android:src="@drawable/ic_widget_plus"
+                    android:scaleType="center"
+                    android:contentDescription="Increase weight" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:layout_marginStart="6dp"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+                <ImageView
+                    android:id="@+id/btn_r_minus_1"
+                    android:layout_width="36dp"
+                    android:layout_height="match_parent"
+                    android:background="@drawable/widget_btn_bg"
+                    android:src="@drawable/ic_widget_minus"
+                    android:scaleType="center"
+                    android:contentDescription="Decrease reps" />
+                <TextView
+                    android:id="@+id/reps_1"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:background="@drawable/widget_value_bg"
+                    android:fontFamily="monospace"
+                    android:textColor="@color/ss_text"
+                    android:gravity="center"
+                    android:autoSizeTextType="uniform"
+                    android:autoSizeMinTextSize="11sp"
+                    android:autoSizeMaxTextSize="22sp"
+                    android:autoSizeStepGranularity="1sp"
+                    android:text="—" />
+                <ImageView
+                    android:id="@+id/btn_r_plus_1"
+                    android:layout_width="36dp"
+                    android:layout_height="match_parent"
+                    android:background="@drawable/widget_btn_bg"
+                    android:src="@drawable/ic_widget_plus"
+                    android:scaleType="center"
+                    android:contentDescription="Increase reps" />
+            </LinearLayout>
+
+            <ImageView
+                android:id="@+id/btn_done_1"
+                android:layout_width="40dp"
+                android:layout_height="match_parent"
+                android:layout_marginStart="6dp"
+                android:background="@drawable/widget_done_off_bg"
+                android:src="@drawable/ic_widget_check"
+                android:scaleType="center"
+                android:contentDescription="Toggle done" />
+        </LinearLayout>
+
+        <!-- Set 3 -->
+        <LinearLayout
+            android:id="@+id/set_row_2"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:layout_marginTop="4dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <TextView
+                android:id="@+id/set_label_2"
+                android:layout_width="32dp"
+                android:layout_height="match_parent"
+                android:fontFamily="sans-serif-condensed"
+                android:textStyle="bold"
+                android:textSize="22sp"
+                android:textColor="@color/ss_text_dim"
+                android:gravity="center"
+                android:autoSizeTextType="uniform"
+                android:autoSizeMinTextSize="14sp"
+                android:autoSizeMaxTextSize="32sp"
+                android:autoSizeStepGranularity="1sp"
+                android:text="3" />
+
+            <LinearLayout
+                android:id="@+id/weight_col_2"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+                <ImageView
+                    android:id="@+id/btn_w_minus_2"
+                    android:layout_width="36dp"
+                    android:layout_height="match_parent"
+                    android:background="@drawable/widget_btn_bg"
+                    android:src="@drawable/ic_widget_minus"
+                    android:scaleType="center"
+                    android:contentDescription="Decrease weight" />
+                <TextView
+                    android:id="@+id/weight_2"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:background="@drawable/widget_value_bg"
+                    android:fontFamily="monospace"
+                    android:textColor="@color/ss_text"
+                    android:gravity="center"
+                    android:autoSizeTextType="uniform"
+                    android:autoSizeMinTextSize="11sp"
+                    android:autoSizeMaxTextSize="22sp"
+                    android:autoSizeStepGranularity="1sp"
+                    android:text="—" />
+                <ImageView
+                    android:id="@+id/btn_w_plus_2"
+                    android:layout_width="36dp"
+                    android:layout_height="match_parent"
+                    android:background="@drawable/widget_btn_bg"
+                    android:src="@drawable/ic_widget_plus"
+                    android:scaleType="center"
+                    android:contentDescription="Increase weight" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:layout_marginStart="6dp"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+                <ImageView
+                    android:id="@+id/btn_r_minus_2"
+                    android:layout_width="36dp"
+                    android:layout_height="match_parent"
+                    android:background="@drawable/widget_btn_bg"
+                    android:src="@drawable/ic_widget_minus"
+                    android:scaleType="center"
+                    android:contentDescription="Decrease reps" />
+                <TextView
+                    android:id="@+id/reps_2"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:background="@drawable/widget_value_bg"
+                    android:fontFamily="monospace"
+                    android:textColor="@color/ss_text"
+                    android:gravity="center"
+                    android:autoSizeTextType="uniform"
+                    android:autoSizeMinTextSize="11sp"
+                    android:autoSizeMaxTextSize="22sp"
+                    android:autoSizeStepGranularity="1sp"
+                    android:text="—" />
+                <ImageView
+                    android:id="@+id/btn_r_plus_2"
+                    android:layout_width="36dp"
+                    android:layout_height="match_parent"
+                    android:background="@drawable/widget_btn_bg"
+                    android:src="@drawable/ic_widget_plus"
+                    android:scaleType="center"
+                    android:contentDescription="Increase reps" />
+            </LinearLayout>
+
+            <ImageView
+                android:id="@+id/btn_done_2"
+                android:layout_width="40dp"
+                android:layout_height="match_parent"
+                android:layout_marginStart="6dp"
+                android:background="@drawable/widget_done_off_bg"
+                android:src="@drawable/ic_widget_check"
+                android:scaleType="center"
+                android:contentDescription="Toggle done" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/placeholder_text"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:gravity="center"
+            android:fontFamily="sans-serif-condensed"
+            android:textStyle="bold"
+            android:textAllCaps="true"
+            android:letterSpacing="0.1"
+            android:textSize="12sp"
+            android:autoSizeTextType="uniform"
+            android:autoSizeMinTextSize="14sp"
+            android:autoSizeMaxTextSize="96sp"
+            android:autoSizeStepGranularity="2sp"
+            android:textColor="@color/ss_text_dim"
+            android:visibility="gone"
+            android:text="" />
+
+    </LinearLayout>
+
+    <!-- Rest timer bar — orange bar at the bottom of the widget when a rest
+         is active. Chronometer counts down to restEndsAt; tapping Dismiss
+         clears it. Hidden by default; visibility toggled by the provider. -->
+    <LinearLayout
+        android:id="@+id/rest_timer_bar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:padding="10dp"
+        android:background="@drawable/widget_header_bg"
+        android:visibility="gone">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:fontFamily="sans-serif-condensed"
+            android:textStyle="bold"
+            android:textAllCaps="true"
+            android:letterSpacing="0.12"
+            android:textSize="14sp"
+            android:textColor="@color/ss_bg"
+            android:text="Rest" />
+
+        <Chronometer
+            android:id="@+id/rest_chrono"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:gravity="center"
+            android:fontFamily="monospace"
+            android:textStyle="bold"
+            android:textSize="20sp"
+            android:textColor="@color/ss_bg" />
+
+        <TextView
+            android:id="@+id/btn_dismiss_rest"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
+            android:paddingTop="6dp"
+            android:paddingBottom="6dp"
+            android:fontFamily="monospace"
+            android:textStyle="bold"
+            android:textAllCaps="true"
+            android:letterSpacing="0.1"
+            android:textSize="11sp"
+            android:textColor="@color/ss_accent"
+            android:background="@drawable/widget_dismiss_bg"
+            android:text="Dismiss" />
+    </LinearLayout>
+
+</LinearLayout>
