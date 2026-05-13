@@ -2426,14 +2426,19 @@
     // prepend a new { date, changes: [...] } object to the front of this array.
     const CHANGELOG = [
       {
-        date: '2026-05-11',
+        date: '2026-05-13',
         changes: [
-          'LOCK-SCREEN WIDGET settings block in DATA + SETNG now only shows inside the Android app — it had no purpose in the browser PWA.',
-          'Data-storage warnings reworded from "in this browser" to "in this install" since the browser PWA and the Android app each keep their own separate data.',
           'Fixed a bug where switching the workout for a weekday could leave both the old and new workout listed in the day picker. Existing duplicates are cleaned up automatically on next load — if any day picks the wrong workout, just re-set it from DATA + SETNG → DAY ASSIGNMENT once.',
           'Fixed a bug where dismissing the rest timer mid-beep could leave Spotify or other background music paused indefinitely. The timer now releases audio focus cleanly on dismiss so music resumes the moment you tap dismiss.',
           'Each exercise has a new NOTES button (just above View History). Tap it to swap the sets pane for a notes text box — jot down form cues, positions, weights to remember, anything. Tap again to hide. Notes save automatically and stay with the exercise.',
           'Rest timer has a new SUGGESTED option in DATA + SETNG. Pick SUGGESTED and the timer auto-picks a rest length per exercise based on evidence-backed rest-interval research — 3 min for heavy barbell squats / deadlifts / bench / OHP, 2.5 min for sub-maximal compounds, 2 min for dumbbell / Smith / cable compounds, 90 sec for isolation, 1 min for cable isolation, core work, and cardio. No more under-resting on a heavy day or over-resting on cable curls.'
+        ]
+      },
+      {
+        date: '2026-05-11',
+        changes: [
+          'LOCK-SCREEN WIDGET settings block in DATA + SETNG now only shows inside the Android app — it had no purpose in the browser PWA.',
+          'Data-storage warnings reworded from "in this browser" to "in this install" since the browser PWA and the Android app each keep their own separate data.'
         ]
       },
       {
