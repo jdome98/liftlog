@@ -713,6 +713,63 @@
     color: #ff4444;
   }
 
+  /* Notes toggle button — same shape as history-toggle, sits above it. */
+  .notes-toggle {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    padding: 8px 12px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    cursor: pointer;
+    width: 100%;
+    margin-top: 4px;
+  }
+
+  .notes-toggle:hover { color: var(--text); }
+
+  .notes-toggle.active {
+    background: var(--accent);
+    color: var(--bg);
+    border-color: var(--accent);
+  }
+
+  /* Notes textarea — hidden by default. Toggled visible when the parent
+     .sets has .show-notes; the set rows / cardio fields hide in turn so
+     the pane fully swaps between numbers and notes. Notes are saved to
+     state.workouts[day].exercises[i].notes on every keystroke. */
+  .exercise-notes {
+    display: none;
+    width: 100%;
+    min-height: 140px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 12px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    line-height: 1.5;
+    resize: vertical;
+    margin-top: 4px;
+    box-sizing: border-box;
+  }
+
+  .exercise-notes:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+
+  .exercise-notes::placeholder {
+    color: var(--text-faint);
+  }
+
+  .sets.show-notes .sets-header,
+  .sets.show-notes .set-row,
+  .sets.show-notes .cardio-fields { display: none; }
+  .sets.show-notes .exercise-notes { display: block; }
+
   /* Day-level finish button */
   .finish-day {
     width: 100%;
@@ -1796,6 +1853,15 @@
   function confirmDayAssignment() {
     if (!pendingDayAssignment) return;
     if (!isDayAssignmentValid(pendingDayAssignment)) return;
+    // CRITICAL: clear `day` on any workout that's NOT in the new assignment
+    // before stamping the new ones. Without this, switching MON from
+    // `chest_mon` to a custom workout leaves chest_mon.day === 'MON' AND
+    // sets myCustom.day === 'MON' — both end up in the day-picker dropdown
+    // as duplicates pointing at the same weekday.
+    const assignedKeys = new Set(Object.values(pendingDayAssignment).filter(k => !!k));
+    Object.entries(state.workouts).forEach(([k, w]) => {
+      if (!assignedKeys.has(k)) w.day = null;
+    });
     Object.entries(pendingDayAssignment).forEach(([d, k]) => {
       if (state.workouts[k]) state.workouts[k].day = d;
     });
@@ -1856,7 +1922,7 @@
         if (typeof state.acknowledged !== 'boolean') state.acknowledged = false;
         if (!state.currentTab) state.currentTab = 'info';
         if (typeof state.timerEnabled !== 'boolean') state.timerEnabled = true;
-        if (typeof state.timerDuration !== 'number') state.timerDuration = 90;
+        if (state.timerDuration !== 'suggested' && typeof state.timerDuration !== 'number') state.timerDuration = 90;
         if (typeof state.restEndsAt !== 'number') state.restEndsAt = null;
         if (typeof state.widgetWeightStep !== 'number') state.widgetWeightStep = 5;
         if (typeof state.widgetRepStep !== 'number') state.widgetRepStep = 1;
@@ -1866,6 +1932,26 @@
         // Strip deprecated cardio entry from full-rest day (rest_sun) for older saves
         if (state.workouts.rest_sun && Array.isArray(state.workouts.rest_sun.exercises)) {
           state.workouts.rest_sun.exercises = state.workouts.rest_sun.exercises.filter(e => e.id !== 'cardio_sun');
+        }
+        // One-time cleanup for saves affected by the duplicate-day bug (fixed
+        // 2026-05-11): if multiple workouts have the same `day` stamped on
+        // them, keep the FIRST one for each weekday and clear the rest.
+        // Iteration order is JS insertion order, so default workouts
+        // (inserted first) lose to custom workouts (inserted later) — which
+        // is the right outcome since the user actively chose the custom
+        // one. We clear stale .day fields to permanently fix the picker.
+        {
+          const WEEK = ['MON','TUE','WED','THU','FRI','SAT','SUN'];
+          const claimed = new Set();
+          // First pass: prefer LAST-defined workout per day (custom > default)
+          const dayWinner = {};
+          Object.entries(state.workouts || {}).forEach(([k, w]) => {
+            if (WEEK.includes(w.day)) dayWinner[w.day] = k;
+          });
+          // Second pass: clear .day on losers
+          Object.entries(state.workouts || {}).forEach(([k, w]) => {
+            if (WEEK.includes(w.day) && dayWinner[w.day] !== k) w.day = null;
+          });
         }
         // Strip Muay Thai mention from active-rest-day subtitle for older saves
         if (state.workouts.rest_wed && typeof state.workouts.rest_wed.subtitle === 'string' && /muay/i.test(state.workouts.rest_wed.subtitle)) {
@@ -2203,11 +2289,21 @@
     let dayListHtml = '';
     if (showList) {
       const weekOrder = ['MON','TUE','WED','THU','FRI','SAT','SUN'];
-      const dayEntries = Object.entries(state.workouts || {}).slice().sort((a, b) => {
-        const ai = weekOrder.indexOf(a[1].day);
-        const bi = weekOrder.indexOf(b[1].day);
-        return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
+      // Defensive dedupe: walk weekOrder and pick the FIRST workout assigned
+      // to each weekday. If older save state has multiple workouts stamped
+      // with the same `day` (a known bug fixed in 2026-05-11), we render
+      // exactly one row per weekday — first-found wins, the rest are
+      // ignored visually. (The confirmDayAssignment fix prevents new
+      // duplicates from being written.)
+      const workoutsByDay = {};
+      Object.entries(state.workouts || {}).forEach(([k, w]) => {
+        if (weekOrder.includes(w.day) && !workoutsByDay[w.day]) {
+          workoutsByDay[w.day] = { key: k, workout: w };
+        }
       });
+      const dayEntries = weekOrder
+        .filter(d => workoutsByDay[d])
+        .map(d => [workoutsByDay[d].key, workoutsByDay[d].workout]);
       dayListHtml = `
         <div class="day-row-list">
           ${dayEntries.map(([k, w]) => `
@@ -2333,7 +2429,11 @@
         date: '2026-05-11',
         changes: [
           'LOCK-SCREEN WIDGET settings block in DATA + SETNG now only shows inside the Android app — it had no purpose in the browser PWA.',
-          'Data-storage warnings reworded from "in this browser" to "in this install" since the browser PWA and the Android app each keep their own separate data.'
+          'Data-storage warnings reworded from "in this browser" to "in this install" since the browser PWA and the Android app each keep their own separate data.',
+          'Fixed a bug where switching the workout for a weekday could leave both the old and new workout listed in the day picker. Existing duplicates are cleaned up automatically on next load — if any day picks the wrong workout, just re-set it from DATA + SETNG → DAY ASSIGNMENT once.',
+          'Fixed a bug where dismissing the rest timer mid-beep could leave Spotify or other background music paused indefinitely. The timer now releases audio focus cleanly on dismiss so music resumes the moment you tap dismiss.',
+          'Each exercise has a new NOTES button (just above View History). Tap it to swap the sets pane for a notes text box — jot down form cues, positions, weights to remember, anything. Tap again to hide. Notes save automatically and stay with the exercise.',
+          'Rest timer has a new SUGGESTED option in DATA + SETNG. Pick SUGGESTED and the timer auto-picks a rest length per exercise based on evidence-backed rest-interval research — 3 min for heavy barbell squats / deadlifts / bench / OHP, 2.5 min for sub-maximal compounds, 2 min for dumbbell / Smith / cable compounds, 90 sec for isolation, 1 min for cable isolation, core work, and cardio. No more under-resting on a heavy day or over-resting on cable curls.'
         ]
       },
       {
@@ -2567,6 +2667,7 @@
               <option value="60" ${state.timerDuration === 60 ? 'selected' : ''}>60 sec</option>
               <option value="90" ${state.timerDuration === 90 ? 'selected' : ''}>90 sec</option>
               <option value="120" ${state.timerDuration === 120 ? 'selected' : ''}>120 sec</option>
+              <option value="suggested" ${state.timerDuration === 'suggested' ? 'selected' : ''}>Suggested</option>
             </select>
             <label class="toggle-switch">
               <input type="checkbox" id="timerEnabledToggle" ${state.timerEnabled ? 'checked' : ''}>
@@ -2680,7 +2781,8 @@
     }
     if (durSelect) {
       durSelect.addEventListener('change', (e) => {
-        state.timerDuration = parseInt(e.target.value);
+        const v = e.target.value;
+        state.timerDuration = v === 'suggested' ? 'suggested' : parseInt(v);
         saveState();
       });
     }
@@ -2881,6 +2983,8 @@
               </div>
               <button class="set-done cardio-done ${cardioDone ? 'done' : ''}" data-cardio-done>${cardioDone ? '✓' : '○'}</button>
             </div>
+            <textarea class="exercise-notes" data-action="edit-notes" placeholder="Notes...">${escapeHtml(ex.notes || '')}</textarea>
+            <button class="notes-toggle" data-action="toggle-notes">Notes</button>
             <button class="history-toggle" data-action="toggle-history">View History</button>
             <div class="history">
               ${historyHtml}
@@ -2992,6 +3096,8 @@
         <div class="sets ${modeClass}">
           ${setsHeaderHtml}
           ${setsHtml}
+          <textarea class="exercise-notes" data-action="edit-notes" placeholder="Notes...">${escapeHtml(ex.notes || '')}</textarea>
+          <button class="notes-toggle" data-action="toggle-notes">Notes</button>
           <button class="history-toggle" data-action="toggle-history">View History</button>
           <div class="history">
             ${historyHtml}
@@ -3083,6 +3189,41 @@
         const history = btn.parentElement.querySelector('.history');
         history.classList.toggle('show');
         btn.textContent = history.classList.contains('show') ? 'Hide History' : 'View History';
+      });
+    });
+
+    // Notes toggle — swaps the set-rows pane for a notes textarea on the
+    // same exercise card. Notes are persisted per-exercise on the workout
+    // (state.workouts[day].exercises[i].notes) so they travel with the
+    // exercise across days and aren't lost when the user reorders or
+    // collapses the card.
+    document.querySelectorAll('[data-action="toggle-notes"]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const setsEl = btn.parentElement;
+        setsEl.classList.toggle('show-notes');
+        btn.classList.toggle('active', setsEl.classList.contains('show-notes'));
+        // Focus the textarea when opening, so the keyboard pops up on mobile.
+        if (setsEl.classList.contains('show-notes')) {
+          const ta = setsEl.querySelector('[data-action="edit-notes"]');
+          if (ta) ta.focus();
+        }
+      });
+    });
+
+    // Persist notes on every keystroke. Lightweight — single field write +
+    // existing saveState — so debouncing isn't worth the complexity.
+    document.querySelectorAll('[data-action="edit-notes"]').forEach(ta => {
+      ta.addEventListener('input', (e) => {
+        const exerciseEl = e.target.closest('.exercise');
+        if (!exerciseEl) return;
+        const exerciseId = exerciseEl.dataset.exercise;
+        const wo = state.workouts[state.currentDay];
+        if (!wo || !Array.isArray(wo.exercises)) return;
+        const ex = wo.exercises.find(x => x.id === exerciseId);
+        if (!ex) return;
+        ex.notes = e.target.value;
+        saveState();
       });
     });
 
@@ -3495,6 +3636,60 @@
     saveState();
   }
 
+  // Resolve the effective rest duration in seconds for an exercise the
+  // user just completed a set of. If state.timerDuration is a number,
+  // use it directly. If it's 'suggested', infer from the exercise via
+  // getSuggestedRestSec — heavy compound barbell lifts get 3 min, cable
+  // isolation gets 1 min, etc., per evidence-backed rest-interval research
+  // (NSCA / ACSM / Schoenfeld 2016 / Frontiers 2024 meta-analysis).
+  function getActiveTimerDuration(exerciseId) {
+    if (state.timerDuration === 'suggested') {
+      const wo = state.workouts[state.currentDay];
+      const ex = wo && Array.isArray(wo.exercises) ? wo.exercises.find(x => x.id === exerciseId) : null;
+      return getSuggestedRestSec(ex);
+    }
+    return state.timerDuration;
+  }
+
+  // Map an exercise to an evidence-backed rest interval (seconds), used
+  // when state.timerDuration === 'suggested'. Classification is by mode +
+  // name + tags so it works for both library-derived and custom exercises.
+  // Falls back to 90 s for anything we can't confidently classify — the
+  // common safe middle ground for general accessory work.
+  function getSuggestedRestSec(ex) {
+    if (!ex) return 90;
+    if (ex.mode === 'cardio' || ex.isCardio) return 60;
+    if (ex.mode === 'time') return 60; // planks, dead hangs, timed holds
+    const n = (ex.name || '').toLowerCase();
+    const tags = Array.isArray(ex.tags) ? ex.tags : [];
+    const hasTag = (t) => tags.includes(t);
+    if (ex.mode === 'bodyweight') {
+      // Bodyweight compounds programmed to/near failure
+      if (/pull.?up|chin.?up|\bdip(s|)\b|push.?up|inverted row/i.test(n)) return 120;
+      return 60; // high-rep / timed / accessory bodyweight
+    }
+    // mode === 'reps' from here on (weight + reps)
+    if (hasTag('abs') || hasTag('core') ||
+        /crunch|leg raise|russian twist|woodchop|ab wheel/i.test(n)) return 60;
+    if (hasTag('cable') &&
+        (hasTag('isolation') || /lateral|pushdown|kickback|face pull|cable crunch|cable curl|crossover/i.test(n))) return 60;
+    // Heavy compound barbell — strict heavy lifts only
+    if (/^(barbell bench press|conventional deadlift|sumo deadlift|trap bar deadlift|overhead press|standing overhead press|push press|back squat|low.?bar squat|high.?bar squat|pendlay row)$/i.test(ex.name || '')) return 180;
+    // Sub-maximal compound barbell (front squat, RDL, incline BB, paused, sub-max rows)
+    if (/front squat|romanian deadlift|stiff.?leg(ged)? deadlift|incline barbell|paused bench|barbell row|yates row|t.?bar row|seal row/i.test(n) &&
+        !/dumbbell|smith|cable/i.test(n)) return 150;
+    if (/^smith machine /i.test(n) && /squat|bench|press|row|deadlift|shrug/i.test(n)) return 120;
+    if (/dumbbell|\bdb\b/i.test(n) && /bench|press|row|squat|lunge|deadlift|shrug/i.test(n)) return 120;
+    if (/leg press|hack squat|lat pulldown|cable row|seated cable row|leg curl|leg extension/i.test(n)) {
+      return /leg curl|leg extension|calf raise/i.test(n) ? 90 : 120;
+    }
+    if (hasTag('isolation') || /curl|extension|fly|shrug|raise|kickback|skull crusher|calf raise/i.test(n)) {
+      if (/cable|pushdown|crossover/i.test(n)) return 60;
+      return 90;
+    }
+    return 90; // generic accessory
+  }
+
   function handleSetDone(e) {
     e.stopPropagation();
     const row = e.target.closest('.set-row');
@@ -3516,7 +3711,7 @@
     saveState();
     // Start rest timer only when checking ON, not when unchecking
     if (!wasChecked && state.timerEnabled) {
-      startRestTimer(state.timerDuration);
+      startRestTimer(getActiveTimerDuration(exerciseId));
     }
   }
 
@@ -3545,7 +3740,7 @@
     exerciseEl.classList.toggle('complete', data.cardio.done);
     saveState();
     if (!wasDone && state.timerEnabled) {
-      startRestTimer(state.timerDuration);
+      startRestTimer(getActiveTimerDuration(exerciseId));
     }
   }
 
@@ -4331,6 +4526,15 @@
           document.body.appendChild(timerKeepAliveVideo);
         }
       } catch (e) {}
+    } else if (!timerKeepAliveStream && timerKeepAliveCanvas &&
+               typeof timerKeepAliveCanvas.captureStream === 'function') {
+      // The video element survived from a prior timer but the stream got
+      // torn down on dismiss (intentional, to release Chrome's media-session
+      // focus). Re-attach a fresh stream so the keep-alive resumes.
+      try {
+        timerKeepAliveStream = timerKeepAliveCanvas.captureStream(1);
+        timerKeepAliveVideo.srcObject = timerKeepAliveStream;
+      } catch (e) {}
     }
     if (timerKeepAliveVideo) {
       try {
@@ -4349,6 +4553,19 @@
     }
     if (timerKeepAliveVideo) {
       try { timerKeepAliveVideo.pause(); } catch (e) {}
+      // Detach the MediaStream so Chrome fully releases any pending media-
+      // session focus the muted video had been holding. Without this,
+      // dismissing a timer mid-beep can leave Spotify paused indefinitely
+      // because Chrome thinks the page still has a "playing" media element.
+      // We recreate the stream on the next timer start (cheap, just a 1×1
+      // canvas captureStream).
+      try { timerKeepAliveVideo.srcObject = null; } catch (e) {}
+    }
+    if (timerKeepAliveStream) {
+      try {
+        timerKeepAliveStream.getTracks().forEach(t => { try { t.stop(); } catch (e) {} });
+      } catch (e) {}
+      timerKeepAliveStream = null;
     }
   }
 
@@ -4364,21 +4581,31 @@
   }
 
   function stopTimerAudio() {
-    for (const t of timerPlayTimeouts) clearTimeout(t);
-    timerPlayTimeouts = [];
+    // Release the audio session FIRST. If a beep is mid-play with
+    // audioSession.type === 'transient', and we pause its <audio> element
+    // before resetting the session type, Chrome can leave the
+    // AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK request held — which keeps
+    // Spotify paused indefinitely (the user-reported bug). Setting
+    // audioSession.type='auto' first signals "we're done with the duck"
+    // before anything else changes, so background music reliably resumes.
     if (timerSessionRestoreTimer) {
       clearTimeout(timerSessionRestoreTimer);
       timerSessionRestoreTimer = null;
     }
-    if (timerAudioElements) {
-      for (const k in timerAudioElements) {
-        try { timerAudioElements[k].pause(); } catch (e) {}
-      }
-    }
-    stopTimerSilentLoop();
     if (navigator.audioSession) {
       try { navigator.audioSession.type = 'auto'; } catch (e) {}
     }
+    for (const t of timerPlayTimeouts) clearTimeout(t);
+    timerPlayTimeouts = [];
+    if (timerAudioElements) {
+      for (const k in timerAudioElements) {
+        try {
+          timerAudioElements[k].pause();
+          timerAudioElements[k].currentTime = 0;
+        } catch (e) {}
+      }
+    }
+    stopTimerSilentLoop();
   }
 
   // Rest timer is driven by state.restEndsAt (epoch ms), so it survives
