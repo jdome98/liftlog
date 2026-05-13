@@ -162,20 +162,19 @@ fun ActiveExerciseScreen(snapshot: Snapshot) {
         }
     }
 
-    // PR overlay — fires only on rising edge of done-count, not on
-    // adjusted-value-into-PR-territory.
+    // PR overlay — fires only on the rising edge of (allComplete && isPr),
+    // i.e., the moment the user finishes the exercise AND it qualifies
+    // as a PR. Adjusting weight/reps mid-exercise no longer triggers it.
     var showPrOverlay by remember { mutableStateOf(false) }
-    val doneCount = remember(exercise) {
-        exercise.sets.count { it.d } + (if (exercise.cardio?.done == true) 1 else 0)
-    }
-    val prevDoneCount = remember(exercise.id) { mutableStateOf(doneCount) }
-    LaunchedEffect(exercise.id, doneCount, exercise.isPr) {
-        if (doneCount > prevDoneCount.value && exercise.isPr) {
+    val isPrComplete = exercise.allComplete && exercise.isPr
+    val prevPrComplete = remember(exercise.id) { mutableStateOf(isPrComplete) }
+    LaunchedEffect(exercise.id, isPrComplete) {
+        if (isPrComplete && !prevPrComplete.value) {
             showPrOverlay = true
             delay(2500)
             showPrOverlay = false
         }
-        prevDoneCount.value = doneCount
+        prevPrComplete.value = isPrComplete
     }
 
     Box(
@@ -420,7 +419,7 @@ private fun ExerciseSemicircle(
                     color = SplitstakColors.TextDim,
                     maxLines = 1
                 )
-                if (exercise.isPr) {
+                if (exercise.allComplete && exercise.isPr) {
                     PrPill()
                 }
             }
@@ -430,19 +429,15 @@ private fun ExerciseSemicircle(
 
 @Composable
 private fun PrPill() {
-    Box(
-        modifier = Modifier
-            .border(1.dp, SplitstakColors.Accent)
-            .padding(horizontal = 3.dp, vertical = 1.dp)
-    ) {
-        Text(
-            text = "PR",
-            fontFamily = FontFamily.SansSerif,
-            fontSize = 8.sp,
-            fontWeight = FontWeight.Bold,
-            color = SplitstakColors.Accent
-        )
-    }
+    // Bare-letter "PR" — no border, no padding. Sits inline next to
+    // the SET line and stays legible at small sizes.
+    Text(
+        text = "PR",
+        fontFamily = FontFamily.SansSerif,
+        fontSize = 11.sp,
+        fontWeight = FontWeight.Bold,
+        color = SplitstakColors.Accent
+    )
 }
 
 @Composable
