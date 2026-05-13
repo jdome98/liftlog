@@ -9,8 +9,8 @@ android {
         applicationId "com.splitstak.app"   // must match phone app for Wearable Data Layer
         minSdkVersion rootProject.ext.wearMinSdkVersion
         targetSdkVersion rootProject.ext.wearTargetSdkVersion
-        versionCode 4
-        versionName "1.1.2"
+        versionCode 5
+        versionName "1.1.3"
     }
 
     buildFeatures {

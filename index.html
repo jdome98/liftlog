@@ -2428,6 +2428,9 @@
       {
         date: '2026-05-13',
         changes: [
+          'Wear OS companion: the crown actually adjusts values now (weight, reps, exercise switch). Tapping a box was stealing Compose focus from the rotary handler, so crown events were silently going nowhere. Child taps now use a focus-preserving touch handler and focus is re-asserted on the outer surface after every state change.',
+          'Wear OS companion: the exercise box at the top got a domed half-circle top so it traces the watch\'s screen edge instead of having square corners that get clipped by the circular bezel.',
+          'Wear OS companion: the focused-box pulse and the crown indicator arrow now blink in sync from a single shared animation clock instead of drifting against each other.',
           'Wear OS companion: dropped the ‹ › exercise-nav buttons. The exercise name + target + set counter now lives inside its own focusable box, so you tap to focus it and spin the crown to switch exercises — same interaction model as the WT / RPS boxes. Less clutter, fewer tiny tap targets, one mental model for everything on screen.',
           'Wear OS companion: crown indicator arrow now respects "Worn on right wrist" — the arrow pulses on whichever side your physical crown actually is on, lefty or righty.',
           'Wear OS companion: cardio exercises now correctly show "CARDIO" in the exercise box instead of "SET 1/0".',
