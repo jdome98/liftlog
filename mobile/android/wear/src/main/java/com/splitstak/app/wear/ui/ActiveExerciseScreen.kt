@@ -16,9 +16,11 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -28,19 +30,23 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
@@ -61,31 +67,33 @@ import com.splitstak.app.wear.data.SetEntry
 import com.splitstak.app.wear.data.Snapshot
 import com.splitstak.app.wear.data.WatchState
 import kotlin.math.abs
+import kotlinx.coroutines.delay
 
 /**
  * The main interaction surface — one exercise, one set displayed at a time.
  *
+ * Layout pins a true semicircle (the top half of a circle inscribed in
+ * the box's 2:1 bounding rect) to the top of the screen. Its curvature
+ * matches the watch's bezel because both the semicircle and the watch
+ * face are circles of the same diameter. The remaining bottom half of
+ * the screen holds the value boxes, the done circle, and the progress
+ * dots.
+ *
  * Three focusable shapes, all driven by the same pattern:
  *   1. Tap a shape → orange pulsing border (focused).
- *   2. Spin the crown → adjusts the focused field. The crown indicator
- *      arrow pulses on the same side the physical crown is on, in sync
- *      with the focused box's border (one shared animation clock).
- *   3. Tap again → release focus, crown becomes idle.
+ *   2. Spin the crown → adjusts the focused field.
+ *   3. Tap again → release focus.
  *
- * The three shapes:
- *   - Exercise semicircle (top): the entire upper half of the screen, a
- *     half-circle whose curve traces the watch's bezel. Contains
- *     name + target + "SET 2/3". Crown cycles exercises.
- *   - WT / RPS boxes (or mode-equivalent): crown adjusts the value.
+ * Rotary input is read from [RotaryDispatcher] (a SharedFlow fed by
+ * MainActivity.dispatchGenericMotionEvent) inside ONE persistent
+ * LaunchedEffect that uses rememberUpdatedState to read the current
+ * focus/exercise/setIdx without re-subscribing on every state change.
  *
- * Rotary input is read from [RotaryDispatcher] — a SharedFlow fed by
- * MainActivity.dispatchGenericMotionEvent. This avoids Compose's focus
- * system, which was unreliable with nested tap targets.
- *
- * On hitting a PR, a full-face black overlay flashes "PR" for ~3s.
- * Every interaction calls [ActionSender], which optimistically mutates
- * the watch's local snapshot for instant feedback and sends the same
- * action to the phone over MessageClient for the source-of-truth update.
+ * The PR overlay flashes only when a set is newly marked done AND the
+ * exercise is currently in PR territory — adjusting weight upward no
+ * longer triggers a false PR celebration. Tap the overlay to dismiss.
+ * The "PR" pill on the exercise card is a separate, persistent badge
+ * that stays visible while the PR condition holds.
  */
 @Composable
 fun ActiveExerciseScreen(snapshot: Snapshot) {
@@ -102,61 +110,70 @@ fun ActiveExerciseScreen(snapshot: Snapshot) {
         if (idx >= 0) idx else (exercise.sets.size - 1).coerceAtLeast(0)
     }
 
-    // Which shape is focused for crown input. Intentionally NOT keyed
-    // on exercise.id — we want focus to persist while the user spins
-    // through exercises with the crown.
+    // Focus state — intentionally NOT keyed on exercise.id so it
+    // persists while the user spins through exercises with the crown.
     var focused by remember { mutableStateOf<String?>(null) }
 
     val isLefty = remember { detectLefty(context) }
 
-    // ONE shared pulse for the focused border + crown arrow, smooth
-    // ease-in-out so it breathes rather than blinks.
+    // Slow, smooth breathing pulse — read as State to defer to
+    // graphicsLayer at draw time and avoid recomposing on every frame.
     val pulse = rememberInfiniteTransition(label = "focus-pulse")
-    val pulseAlpha by pulse.animateFloat(
-        initialValue = 0.45f, targetValue = 1f,
+    val pulseAlphaState: State<Float> = pulse.animateFloat(
+        initialValue = 0.5f, targetValue = 1f,
         animationSpec = infiniteRepeatable(
-            animation = tween(1000, easing = FastOutSlowInEasing),
+            animation = tween(1500, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
         ),
         label = "focus-pulse-alpha"
     )
 
-    // Subscribe to rotary events. The collector is only active while a
-    // shape is focused; otherwise crown rotation is ignored.
-    LaunchedEffect(focused, exercise.id, setIdx) {
-        val f = focused ?: return@LaunchedEffect
-        // Per-mode detent thresholds. Lower for inc-style adjustments
-        // so the crown feels responsive; higher for exercise nav so a
-        // single roll doesn't skip past three exercises.
-        val threshold = if (f == "exercise") 50f else 24f
+    // ONE persistent rotary collector. rememberUpdatedState lets the
+    // collector read current focus/exercise/setIdx values without
+    // tearing down the collector on every state change.
+    val focusedRef = rememberUpdatedState(focused)
+    val exerciseIdRef = rememberUpdatedState(exercise.id)
+    val setIdxRef = rememberUpdatedState(setIdx)
+    LaunchedEffect(Unit) {
         var accum = 0f
         RotaryDispatcher.events.collect { delta ->
+            val f = focusedRef.value ?: return@collect
+            val exId = exerciseIdRef.value
+            val sIdx = setIdxRef.value
             accum += delta
+            // Per-mode detent thresholds. Lower for inc-style adjustments
+            // so the crown feels responsive; higher for exercise nav so
+            // a single roll doesn't skip past three exercises.
+            val threshold = if (f == "exercise") 60f else 32f
             while (abs(accum) >= threshold) {
                 val sign = if (accum > 0) 1 else -1
                 accum -= sign * threshold
                 when (f) {
                     "exercise" -> ActionSender.nav(context, sign)
-                    "weight" -> ActionSender.incWeight(context, exercise.id, setIdx, sign)
-                    "reps"   -> ActionSender.incReps(context, exercise.id, setIdx, sign)
-                    "hold"   -> ActionSender.incHold(context, exercise.id, setIdx, sign)
-                    "ctime"  -> ActionSender.incTime(context, exercise.id, sign.toDouble())
-                    "cdist"  -> ActionSender.incDistance(context, exercise.id, sign.toDouble())
+                    "weight" -> ActionSender.incWeight(context, exId, sIdx, sign)
+                    "reps"   -> ActionSender.incReps(context, exId, sIdx, sign)
+                    "hold"   -> ActionSender.incHold(context, exId, sIdx, sign)
+                    "ctime"  -> ActionSender.incTime(context, exId, sign.toDouble())
+                    "cdist"  -> ActionSender.incDistance(context, exId, sign.toDouble())
                 }
             }
         }
     }
 
-    // PR overlay — rising edge of exercise.isPr while id stays constant.
+    // PR overlay — fires only on the rising edge of done-count
+    // (a set was just newly completed) AND while exercise.isPr is true.
     var showPrOverlay by remember { mutableStateOf(false) }
-    val prevPr = remember(exercise.id) { mutableStateOf(exercise.isPr) }
-    LaunchedEffect(exercise.id, exercise.isPr) {
-        if (exercise.isPr && !prevPr.value) {
+    val doneCount = remember(exercise) {
+        exercise.sets.count { it.d } + (if (exercise.cardio?.done == true) 1 else 0)
+    }
+    val prevDoneCount = remember(exercise.id) { mutableStateOf(doneCount) }
+    LaunchedEffect(exercise.id, doneCount, exercise.isPr) {
+        if (doneCount > prevDoneCount.value && exercise.isPr) {
             showPrOverlay = true
-            kotlinx.coroutines.delay(3000)
+            delay(2500)
             showPrOverlay = false
         }
-        prevPr.value = exercise.isPr
+        prevDoneCount.value = doneCount
     }
 
     Box(
@@ -165,53 +182,62 @@ fun ActiveExerciseScreen(snapshot: Snapshot) {
             .background(SplitstakColors.Bg)
     ) {
         Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 6.dp, vertical = 4.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterVertically),
+            modifier = Modifier.fillMaxSize(),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
+            // TOP HALF: semicircle pinned to screen top, exactly tracing
+            // the watch's bezel curvature.
             ExerciseSemicircle(
                 exercise = exercise,
                 setIdx = setIdx,
                 isCardio = isCardio,
                 focused = focused == "exercise",
-                pulseAlpha = pulseAlpha,
+                pulseAlphaState = pulseAlphaState,
                 onClick = {
                     focused = if (focused == "exercise") null else "exercise"
                 }
             )
 
-            BodyBoxes(
-                exercise = exercise,
-                setIdx = setIdx,
-                isCardio = isCardio,
-                focused = focused,
-                pulseAlpha = pulseAlpha,
-                onToggleFocus = { tag -> focused = if (focused == tag) null else tag }
-            )
+            // BOTTOM HALF: body content centered vertically in remaining
+            // space.
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterVertically),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                BodyBoxes(
+                    exercise = exercise,
+                    setIdx = setIdx,
+                    isCardio = isCardio,
+                    focused = focused,
+                    pulseAlphaState = pulseAlphaState,
+                    onToggleFocus = { tag -> focused = if (focused == tag) null else tag }
+                )
 
-            val isDone: Boolean = if (isCardio) {
-                exercise.cardio?.done == true
-            } else {
-                exercise.sets.getOrNull(setIdx)?.d == true
-            }
-            DoneCircle(
-                done = isDone,
-                onClick = {
-                    if (isCardio) {
-                        ActionSender.toggleDone(context, exercise.id, -1)
-                    } else {
-                        ActionSender.toggleDone(context, exercise.id, setIdx)
-                    }
+                val isDone: Boolean = if (isCardio) {
+                    exercise.cardio?.done == true
+                } else {
+                    exercise.sets.getOrNull(setIdx)?.d == true
                 }
-            )
+                DoneCircle(
+                    done = isDone,
+                    onClick = {
+                        if (isCardio) {
+                            ActionSender.toggleDone(context, exercise.id, -1)
+                        } else {
+                            ActionSender.toggleDone(context, exercise.id, setIdx)
+                        }
+                    }
+                )
 
-            ProgressDots(exercises = snapshot.exercises)
+                ProgressDots(exercises = snapshot.exercises)
+            }
         }
 
         // Crown indicator arrow — pulses on whichever side the crown is
-        // physically on, in sync with the focused border.
+        // on, sharing the same pulse clock as the focused border.
         if (focused != null) {
             Box(
                 modifier = Modifier
@@ -225,17 +251,20 @@ fun ActiveExerciseScreen(snapshot: Snapshot) {
                     fontSize = 22.sp,
                     fontWeight = FontWeight.Bold,
                     color = SplitstakColors.Accent,
-                    modifier = Modifier.alpha(pulseAlpha)
+                    modifier = Modifier.graphicsLayer { alpha = pulseAlphaState.value }
                 )
             }
         }
 
-        // PR overlay
+        // PR overlay — tap to dismiss.
         if (showPrOverlay) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(SplitstakColors.Bg),
+                    .background(SplitstakColors.Bg)
+                    .pointerInput(Unit) {
+                        detectTapGestures { showPrOverlay = false }
+                    },
                 contentAlignment = Alignment.Center
             ) {
                 Text(
@@ -272,10 +301,11 @@ private fun detectLefty(context: Context): Boolean {
 }
 
 /**
- * True semicircle shape — flat chord at the bottom, full arc from
- * bottom-left up over the top to bottom-right. No flat sides. Uses a
- * quadratic bezier; tune the control point so the apex sits exactly at
- * the box's top edge.
+ * True semicircle: top half of a circle inscribed in the box's bounding
+ * rect. The Box MUST be sized 2:1 (width : height) for the arc to fit
+ * exactly — fillMaxWidth() + aspectRatio(2f) does that. The arc's
+ * curvature then matches the watch's bezel because both are circles of
+ * the same diameter (full screen width).
  */
 private object SemicircleShape : Shape {
     override fun createOutline(
@@ -285,11 +315,19 @@ private object SemicircleShape : Shape {
     ): Outline {
         val w = size.width
         val h = size.height
-        // Bezier control point at (w/2, -h) yields a peak at (w/2, 0).
-        // Math: B(0.5).y = 0.25·h + 0.5·(-h) + 0.25·h = 0.
+        // Inscribed-circle bounds: square (0,0) to (w,w). Arc from
+        // 180° (left of circle = (0, w/2)) sweeping +180° clockwise
+        // passes through 270° (top = (w/2, 0)) and lands at 360°/0°
+        // (right = (w, w/2)). When h = w/2 the arc's endpoints coincide
+        // exactly with the box's bottom corners.
         val path = Path().apply {
             moveTo(0f, h)
-            quadraticBezierTo(w / 2f, -h, w, h)
+            arcTo(
+                rect = Rect(0f, 0f, w, w),
+                startAngleDegrees = 180f,
+                sweepAngleDegrees = 180f,
+                forceMoveTo = false
+            )
             close()
         }
         return Outline.Generic(path)
@@ -302,66 +340,95 @@ private fun ExerciseSemicircle(
     setIdx: Int,
     isCardio: Boolean,
     focused: Boolean,
-    pulseAlpha: Float,
+    pulseAlphaState: State<Float>,
     onClick: () -> Unit
 ) {
-    val borderColor: Color = if (focused) {
-        SplitstakColors.Accent.copy(alpha = pulseAlpha)
-    } else {
-        SplitstakColors.Border
-    }
-
-    val targetLine = buildString {
-        if (exercise.target.isNotEmpty()) append(exercise.target)
-        if (exercise.isPr) {
-            if (isNotEmpty()) append(" · ")
-            append("PR")
-        }
-    }
-
-    // Width ≈ 92% of screen so the arc clears the bezel. Height fixed
-    // so the bezier produces a visually-balanced semicircle (height
-    // around half the width gives a near-circular look).
-    Column(
+    Box(
         modifier = Modifier
-            .fillMaxWidth(0.92f)
-            .height(110.dp)
+            .fillMaxWidth(0.97f)
+            .aspectRatio(2f)
             .background(SplitstakColors.Surface, shape = SemicircleShape)
-            .border(1.5.dp, borderColor, shape = SemicircleShape)
             .pointerInput(Unit) { detectTapGestures { onClick() } }
-            // Top padding clears the narrow apex of the arc so text
-            // sits in the wider lower portion of the semicircle.
-            .padding(start = 14.dp, end = 14.dp, top = 38.dp, bottom = 6.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(1.dp)
     ) {
-        Text(
-            text = exercise.name.uppercase(),
-            fontFamily = FontFamily.SansSerif,
-            fontSize = 11.sp,
-            lineHeight = 13.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = SplitstakColors.Text,
-            textAlign = TextAlign.Center,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis
+        // Static dark border — always visible.
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .border(1.5.dp, SplitstakColors.Border, shape = SemicircleShape)
         )
-        if (targetLine.isNotEmpty()) {
-            Text(
-                text = targetLine,
-                fontFamily = FontFamily.Monospace,
-                fontSize = 8.sp,
-                color = SplitstakColors.Accent,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+        // Pulsing orange border — only when focused. graphicsLayer
+        // reads pulseAlphaState at draw time, not recomposition time,
+        // so the animation doesn't cause expensive recomposition.
+        if (focused) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer { alpha = pulseAlphaState.value }
+                    .border(1.5.dp, SplitstakColors.Accent, shape = SemicircleShape)
             )
         }
+        // Content — clear the narrow top portion of the arc with a
+        // top padding so text sits in the wider lower portion.
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(start = 18.dp, end = 18.dp, top = 56.dp, bottom = 8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            Text(
+                text = exercise.name.uppercase(),
+                fontFamily = FontFamily.SansSerif,
+                fontSize = 12.sp,
+                lineHeight = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = SplitstakColors.Text,
+                textAlign = TextAlign.Center,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+            if (exercise.target.isNotEmpty()) {
+                Text(
+                    text = exercise.target,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 9.sp,
+                    color = SplitstakColors.Accent,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(5.dp)
+            ) {
+                Text(
+                    text = if (isCardio) "CARDIO" else "SET ${setIdx + 1}/${exercise.sets.size}",
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 9.sp,
+                    color = SplitstakColors.TextDim,
+                    maxLines = 1
+                )
+                if (exercise.isPr) {
+                    PrPill()
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PrPill() {
+    Box(
+        modifier = Modifier
+            .border(1.dp, SplitstakColors.Accent)
+            .padding(horizontal = 3.dp, vertical = 1.dp)
+    ) {
         Text(
-            text = if (isCardio) "CARDIO" else "SET ${setIdx + 1}/${exercise.sets.size}",
-            fontFamily = FontFamily.Monospace,
-            fontSize = 9.sp,
-            color = SplitstakColors.TextDim,
-            maxLines = 1
+            text = "PR",
+            fontFamily = FontFamily.SansSerif,
+            fontSize = 8.sp,
+            fontWeight = FontWeight.Bold,
+            color = SplitstakColors.Accent
         )
     }
 }
@@ -372,7 +439,7 @@ private fun BodyBoxes(
     setIdx: Int,
     isCardio: Boolean,
     focused: String?,
-    pulseAlpha: Float,
+    pulseAlphaState: State<Float>,
     onToggleFocus: (String) -> Unit
 ) {
     val set = exercise.sets.getOrNull(setIdx) ?: SetEntry("", "", "", false)
@@ -383,18 +450,18 @@ private fun BodyBoxes(
         when {
             isCardio -> {
                 val c = exercise.cardio
-                ValueBox("MIN", c?.time ?: "", focused == "ctime", pulseAlpha) { onToggleFocus("ctime") }
-                ValueBox("MI", c?.distance ?: "", focused == "cdist", pulseAlpha) { onToggleFocus("cdist") }
+                ValueBox("MIN", c?.time ?: "", focused == "ctime", pulseAlphaState) { onToggleFocus("ctime") }
+                ValueBox("MI", c?.distance ?: "", focused == "cdist", pulseAlphaState) { onToggleFocus("cdist") }
             }
             exercise.mode == "bodyweight" -> {
-                ValueBox("RPS", set.r, focused == "reps", pulseAlpha) { onToggleFocus("reps") }
+                ValueBox("RPS", set.r, focused == "reps", pulseAlphaState) { onToggleFocus("reps") }
             }
             exercise.mode == "time" -> {
-                ValueBox("SEC", set.t, focused == "hold", pulseAlpha) { onToggleFocus("hold") }
+                ValueBox("SEC", set.t, focused == "hold", pulseAlphaState) { onToggleFocus("hold") }
             }
             else -> {
-                ValueBox("WT", set.w, focused == "weight", pulseAlpha) { onToggleFocus("weight") }
-                ValueBox("RPS", set.r, focused == "reps", pulseAlpha) { onToggleFocus("reps") }
+                ValueBox("WT", set.w, focused == "weight", pulseAlphaState) { onToggleFocus("weight") }
+                ValueBox("RPS", set.r, focused == "reps", pulseAlphaState) { onToggleFocus("reps") }
             }
         }
     }
@@ -405,14 +472,9 @@ private fun ValueBox(
     label: String,
     value: String,
     focused: Boolean,
-    pulseAlpha: Float,
+    pulseAlphaState: State<Float>,
     onClick: () -> Unit
 ) {
-    val borderColor: Color = if (focused) {
-        SplitstakColors.Accent.copy(alpha = pulseAlpha)
-    } else {
-        SplitstakColors.Border
-    }
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Text(
             text = label,
@@ -426,17 +488,36 @@ private fun ValueBox(
                 .width(54.dp)
                 .height(32.dp)
                 .background(SplitstakColors.Surface)
-                .border(1.5.dp, borderColor)
-                .pointerInput(Unit) { detectTapGestures { onClick() } },
-            contentAlignment = Alignment.Center
+                .pointerInput(Unit) { detectTapGestures { onClick() } }
         ) {
-            Text(
-                text = value.ifEmpty { "—" },
-                fontFamily = FontFamily.Monospace,
-                fontSize = 17.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = SplitstakColors.Text
+            // Static dark border underlay.
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .border(1.5.dp, SplitstakColors.Border)
             )
+            // Pulsing accent border overlay when focused.
+            if (focused) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer { alpha = pulseAlphaState.value }
+                        .border(1.5.dp, SplitstakColors.Accent)
+                )
+            }
+            // Value text — sits on top.
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = value.ifEmpty { "—" },
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = SplitstakColors.Text
+                )
+            }
         }
     }
 }
