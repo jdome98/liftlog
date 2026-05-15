@@ -2430,7 +2430,7 @@
         changes: [
           'The INFO tab now ends with a small footer linking to the Privacy Policy at splitstak.com/privacy.html and a contact email. The policy was already live; it just wasn\'t reachable from inside the app.',
           'The ANDROID APP card on the INFO tab now points at the latest GitHub release automatically instead of being pinned to the very first beta tag. New beta builds reach sideload users without needing the link updated.',
-          'CSV export now works inside the Android app and produces a real .csv file. Tap Export and Android\'s share sheet pops up — pick "Save to Files" to drop the file somewhere on your phone, or email it to yourself, or send it to Drive, or anywhere else. The Chrome PWA at splitstak.com keeps its existing direct .csv download behaviour. Note: requires the Android app to be on v1.2.4 or newer.'
+          'CSV export inside the Android app now saves directly to your phone\'s Downloads folder, like a normal Chrome download. Tap Export and the file appears at Downloads/splitstak-YYYY-MM-DD.csv — open the Files app to see it. The brief share-sheet step from v1.2.4 is gone. The Chrome PWA at splitstak.com keeps its existing direct .csv download behaviour. Note: requires the Android app to be on v1.2.5 or newer (Android 10+).'
         ]
       },
       {
@@ -4197,32 +4197,27 @@
 
     // Capacitor (Android) path. The Android WebView has no download manager
     // and doesn't expose the Web Share API, so a plain <a download> silently
-    // fails. We write the CSV to the app's cache directory via
-    // @capacitor/filesystem, then open Android's share sheet via
-    // @capacitor/share so the user can route the real .csv file to Files,
-    // Gmail, Drive, or anywhere else. Both plugins are installed in
-    // mobile/package.json — if they're missing the bridge is out of sync.
+    // fails. Our custom SplitstakDownloads plugin writes the CSV directly
+    // into the device's public Downloads folder via MediaStore.Downloads on
+    // Android 10+ — same place Chrome would put a normal download, no share
+    // sheet in the way. See mobile/android/app/src/main/java/com/splitstak/
+    // app/downloads/DownloadsPlugin.java.
     if (window.Capacitor) {
       const plugins = window.Capacitor.Plugins || {};
-      if (plugins.Filesystem && plugins.Share) {
-        plugins.Filesystem.writeFile({
-          path: filename,
-          data: csv,
-          directory: 'CACHE',
-          encoding: 'utf8'
-        }).then((res) => plugins.Share.share({
-          title: 'SPLITSTAK CSV',
-          files: [res.uri],
-          dialogTitle: 'Save SPLITSTAK CSV'
-        })).then(() => showToast('Exported')).catch((e) => {
-          const msg = (e && (e.message || e.name)) || 'unknown';
-          // User dismissed the share sheet — no error UI
-          if (/cancel/i.test(msg) || /abort/i.test(msg) || /dismiss/i.test(msg)) return;
+      if (plugins.SplitstakDownloads) {
+        plugins.SplitstakDownloads.saveText({
+          filename: filename,
+          content: csv,
+          mimeType: 'text/csv;charset=utf-8;'
+        }).then(() => {
+          showToast('Saved to Downloads');
+        }).catch((e) => {
+          const msg = (e && (e.message || e.errorMessage || e.name)) || 'unknown';
           customAlert('Export failed: ' + msg);
         });
         return;
       }
-      customAlert('Native share plugin not available. Update SPLITSTAK from the Play Store and try again.');
+      customAlert('Update SPLITSTAK from the Play Store to use the new export.');
       return;
     }
 
