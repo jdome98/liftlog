@@ -1983,6 +1983,80 @@
     return JSON.parse(JSON.stringify(obj));
   }
 
+  // ============ NAME-KEYED EXERCISE DATA ============
+  // state.exerciseData is keyed by a canonical key derived from the
+  // exercise name (lowercased, alphanumeric+underscore). This means
+  // "Bench Press" always pulls the same history regardless of which
+  // workout it lives in or which slot it occupies — switching a slot's
+  // name via autocomplete / rename / layout-picker re-points the slot at
+  // the new name's data record. Two slots with the same name share data
+  // (which is the user-intended behavior for a workout tracker).
+  function canonicalKey(name) {
+    if (!name || typeof name !== 'string') return '';
+    return name
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .slice(0, 80);
+  }
+
+  // One-time migration: walk every workout's exercises, rewrite each
+  // exercise.id to canonicalKey(name), and move state.exerciseData
+  // entries to the canonical key. Idempotent — running on an already-
+  // canonical state changes nothing. Called from loadState() and from
+  // migrateV1() so all loaded saves end up with name-keyed data.
+  function migrateExerciseIdsToNameKeys() {
+    if (!state || !state.workouts || !state.exerciseData) return;
+    const renames = {};
+    for (const dayKey in state.workouts) {
+      const day = state.workouts[dayKey];
+      if (!day || !Array.isArray(day.exercises)) continue;
+      for (const ex of day.exercises) {
+        if (!ex || !ex.name) continue;
+        const newId = canonicalKey(ex.name);
+        if (!newId || ex.id === newId) continue;
+        renames[ex.id] = newId;
+        ex.id = newId;
+      }
+    }
+    for (const oldId in renames) {
+      const newId = renames[oldId];
+      const oldData = state.exerciseData[oldId];
+      if (!oldData) continue;
+      const existing = state.exerciseData[newId];
+      if (!existing) {
+        state.exerciseData[newId] = oldData;
+      } else {
+        // Conflict — merge histories by ISO date.
+        const merged = (existing.history || []).slice();
+        const seenIso = new Set(merged.map(h => h.iso));
+        for (const h of (oldData.history || [])) {
+          if (h && h.iso && !seenIso.has(h.iso)) {
+            merged.push(h);
+            seenIso.add(h.iso);
+          }
+        }
+        merged.sort((a, b) => (a.iso || '').localeCompare(b.iso || ''));
+        existing.history = merged;
+      }
+      delete state.exerciseData[oldId];
+    }
+  }
+
+  // Switch this slot's data-storage key to match its current name.
+  // Called from name-edit commits (inline-edit, autocomplete pick,
+  // layout-picker). Doesn't carry old data over — the slot RE-POINTS at
+  // whatever's already stored under the new name, so renaming a slot is
+  // equivalent to swapping to a different exercise. Old data stays at
+  // the old key, preserved for any future slot reusing that name.
+  function rekeyExerciseToName(exercise) {
+    if (!exercise || !exercise.name) return;
+    const newId = canonicalKey(exercise.name);
+    if (!newId || newId === exercise.id) return;
+    exercise.id = newId;
+  }
+
   function loadState() {
     storageWorks = tryLocalStorage();
     if (!storageWorks) {
@@ -2034,6 +2108,11 @@
         if (state.workouts.rest_wed && typeof state.workouts.rest_wed.subtitle === 'string' && /muay/i.test(state.workouts.rest_wed.subtitle)) {
           state.workouts.rest_wed.subtitle = 'Light Cardio';
         }
+        // Re-key state.exerciseData so every slot uses canonicalKey(name)
+        // as its data key. New users start with canonical keys natively
+        // (DEFAULT_WORKOUTS uses short codes that get re-keyed on first
+        // load); existing saves migrate transparently. Idempotent.
+        migrateExerciseIdsToNameKeys();
         return;
       }
       // Try migrating from v1 (the old flat key/value structure)
@@ -2041,6 +2120,7 @@
       if (legacy) {
         const v1 = JSON.parse(legacy);
         state = migrateV1(v1);
+        migrateExerciseIdsToNameKeys();
         saveState();
         return;
       }
@@ -2048,6 +2128,10 @@
       console.error('Load failed:', e);
     }
     state = getDefaultState();
+    // Fresh default workouts use legacy short-code IDs ('sm_shoulder' etc.) —
+    // re-key them on first load so a brand-new user gets name-keyed data
+    // out of the gate, matching every other code path.
+    migrateExerciseIdsToNameKeys();
   }
 
   // Migrate old v1 format (flat exercise-id keyed object) to v2 structure.
@@ -2561,7 +2645,8 @@
           'The exercise autocomplete dropdown now ends with a LAYOUT row — four small buttons (W+R, BW, TIME, CARDIO) that switch the exercise row shape on demand. Useful for custom-typed exercise names that don\'t come from the library so you can set bodyweight or cardio mode without picking a library item first.',
           'The autocomplete dropdown no longer accidentally selects a suggestion when you try to scroll past it. Touch-and-drag scrolls cleanly; only a stationary tap commits the choice.',
           'Wear OS app: the inline PR badge next to "SET 1/3" no longer clips against the watch\'s round bottom edge — content lifted up inside the top semicircle.',
-          'Wear OS app: the crown ratchet for adjusting weight, reps, and exercise navigation is faster — previous 1100/700 ms lockouts felt sluggish, now 650/350 ms.'
+          'Wear OS app: the crown ratchet for adjusting weight, reps, and exercise navigation is faster — previous 1100/700 ms lockouts felt sluggish, now 650/350 ms.',
+          'Each exercise\'s weight, reps, and TOP value now live with the exercise NAME, not with the slot it\'s in. Renaming a slot from Bench Press to Squat now loads Squat\'s saved history (if you\'ve done it before) or starts fresh, instead of leaving Bench Press\'s last values sitting in place. Two slots with the same name across different days share data — log Squat on Monday and your Wednesday Squat slot already knows your top. Existing saves are migrated automatically.'
         ]
       },
       {
@@ -3018,6 +3103,7 @@
         const ack = state.acknowledged;
         state = getDefaultState();
         state.acknowledged = ack; // keep their acknowledgment
+        migrateExerciseIdsToNameKeys(); // canonicalize fresh DEFAULT_WORKOUTS IDs
         pendingDayAssignment = null; // discard any in-progress day-assignment edits
         saveState();
         renderTopTabs();
@@ -3550,6 +3636,10 @@
       committed = true;
       const newName = input.value.trim() || currentValue;
       exercise.name = newName;
+      // Re-point this slot's data record at the new name's canonical key.
+      // If the user has prior history under that name, the slot picks it
+      // up; otherwise the renderer's getExerciseData() creates fresh.
+      rekeyExerciseToName(exercise);
       el.classList.remove('editing');
       el.innerHTML = escapeHtml(newName);
       closeAutocomplete();
@@ -3736,6 +3826,10 @@
         // Persist the typed name first so it's not lost when we blur.
         const typedName = input.value.trim();
         if (typedName) exercise.name = typedName;
+        // Re-key BEFORE applyExerciseMode so the mode-induced sets reset
+        // hits the NEW data record (under the new name's canonical key),
+        // not the previous one.
+        rekeyExerciseToName(exercise);
         applyExerciseMode(exercise, mode);
         input.blur();
         setTimeout(() => {
@@ -3775,7 +3869,12 @@
         const newTarget = item.dataset.target;
         const newMode = item.dataset.mode || 'reps';
         input.value = newName;
+        // Commit the name and re-key BEFORE applyExerciseMode so the mode
+        // reset operates on the NEW data record. inline-edit's blur commit
+        // will redundantly re-apply this, which is idempotent.
+        exercise.name = newName;
         exercise.target = newTarget;
+        rekeyExerciseToName(exercise);
         applyExerciseMode(exercise, newMode);
         input.blur();
         setTimeout(() => {
@@ -4457,6 +4556,10 @@
         imported.workouts.rest_wed.subtitle = 'Light Cardio';
       }
       state = imported;
+      // Re-key imported exerciseData by canonical name so a CSV from an
+      // older save (or from a different device with different slot IDs)
+      // surfaces correctly under each exercise's canonical-name key.
+      migrateExerciseIdsToNameKeys();
       pendingDayAssignment = null;
       saveState();
       renderTopTabs();
